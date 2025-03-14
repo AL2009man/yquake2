@@ -172,7 +172,7 @@ static cvar_t *joy_haptic_distance;
 
 // Gyro mode (0=off, 3=on, 1-2=uses button to enable/disable)
 cvar_t *gyro_mode;
-cvar_t *gyro_turning_axis;	// yaw or roll
+cvar_t *gyro_turning_axis;	// yaw, roll, player space and local space
 
 // Gyro sensitivity
 static cvar_t *gyro_yawsensitivity;
@@ -945,33 +945,70 @@ IN_Update(void)
 				if (gyro_active && !cl_paused->value && cls.key_dest == key_game)
 				{
 #ifndef NO_SDL_GYRO
-					if (!gyro_turning_axis->value)
-					{
-						gyro_yaw = event.gsensor.data[1] - gyro_calibration_y->value;		// yaw
+					if ((int)gyro_turning_axis->value == 0) {
+						// Yaw mode
+						gyro_yaw = event.gsensor.data[1] - gyro_calibration_y->value;
 					}
-					else
-					{
-						gyro_yaw = -(event.gsensor.data[2] - gyro_calibration_z->value);	// roll
+					else if ((int)gyro_turning_axis->value == 1) {
+						// Roll mode
+						gyro_yaw = -(event.gsensor.data[2] - gyro_calibration_z->value);
 					}
-					gyro_pitch = event.gsensor.data[0] - gyro_calibration_x->value;
+					else if ((int)gyro_turning_axis->value == 2) {
+						// Player Space mode
+						Vector3 transformedGyro = TransformToPlayerSpace(
+							event.gsensor.data[1] - gyro_calibration_y->value, // yaw
+							event.gsensor.data[0] - gyro_calibration_x->value, // pitch
+							playerViewMatrix // Player's view matrix for transformation
+						);
+						gyro_yaw = transformedGyro.x;
+						gyro_pitch = transformedGyro.y;
+					}
+					else if ((int)gyro_turning_axis->value == 3) {
+						// Local Space mode
+						gyro_yaw = event.gsensor.data[1] - gyro_calibration_y->value; // Raw yaw
+						gyro_pitch = event.gsensor.data[0] - gyro_calibration_x->value; // Raw pitch
+					}
 #else	// old "joystick" gyro
-					switch (event.gaxis.axis)	// inside "case SDL_EVENT_JOYSTICK_AXIS_MOTION" here
-					{
-						case IMU_JOY_AXIS_GYRO_PITCH:
+					switch (event.gaxis.axis) {
+					case IMU_JOY_AXIS_GYRO_PITCH:
+						if ((int)gyro_turning_axis->value == 2) {
+							// Player Space mode
+							Vector3 transformedGyro = TransformToPlayerSpace(
+								-(axis_value - gyro_calibration_x->value), // pitch
+								gyro_yaw, // current yaw
+								playerViewMatrix
+							);
+							gyro_pitch = transformedGyro.y;
+						}
+						else {
+							// Default or Local Space
 							gyro_pitch = -(axis_value - gyro_calibration_x->value);
-							break;
-						case IMU_JOY_AXIS_GYRO_YAW:
-							if (!gyro_turning_axis->value)
-							{
-								gyro_yaw = axis_value - gyro_calibration_y->value;
-							}
-							break;
-						case IMU_JOY_AXIS_GYRO_ROLL:
-							if (gyro_turning_axis->value)
-							{
-								gyro_yaw = axis_value - gyro_calibration_z->value;
-							}
+						}
+						break;
+
+					case IMU_JOY_AXIS_GYRO_YAW:
+						if ((int)gyro_turning_axis->value == 0 || (int)gyro_turning_axis->value == 3) {
+							// Yaw or Local Space
+							gyro_yaw = axis_value - gyro_calibration_y->value;
+						}
+						else if ((int)gyro_turning_axis->value == 2) {
+							// Player Space mode
+							gyro_yaw = TransformToPlayerSpace(
+								gyro_yaw,
+								gyro_pitch,
+								playerViewMatrix
+							).x;
+						}
+						break;
+
+					case IMU_JOY_AXIS_GYRO_ROLL:
+						if ((int)gyro_turning_axis->value == 1) {
+							// Roll mode
+							gyro_yaw = axis_value - gyro_calibration_z->value;
+						}
+						break;
 					}
+
 #endif	// !NO_SDL_GYRO
 				}
 				else
@@ -1214,6 +1251,17 @@ IN_TightenInput(float yaw, float pitch)
 		input.y *= scale;
 	}
 	return input;
+}
+
+/*
+ * Transform gyro input to Player Space.
+ * Maps raw gyro input using the player's current in-game orientation.
+ */
+static Vector3
+TransformToPlayerSpace(float yaw, float pitch, Matrix4 playerViewMatrix)
+{
+	Vector3 rawGyro = { yaw, pitch, 0.0f };
+	return MultiplyMatrixVector(playerViewMatrix, rawGyro); // Apply transformation
 }
 
 /*
@@ -1519,11 +1567,6 @@ IN_Move(usercmd_t *cmd)
 		// We need to be twice as fast because with joystick we run...
 		cmd->sidemove += m_side->value * joy_sidesensitivity->value
 					* cl_sidespeed->value * 2.0f * joystick_sidemove;
-	}
-
-	if (gyro_yaw || gyro_pitch)
-	{
-		gyro_in = IN_TightenInput(gyro_yaw, gyro_pitch);
 	}
 
 	if (gyro_in.x)
