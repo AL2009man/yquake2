@@ -1,3 +1,0 @@
-[submodule "src/client/input/GamepadMotionHelpers"]
-	path = src/client/input/GamepadMotionHelpers
-	url = https://github.com/JibbSmart/GamepadMotionHelpers
