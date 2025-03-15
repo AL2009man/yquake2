@@ -1146,7 +1146,7 @@ IN_Update(void)
 
 					case 4:  // World Space mode
 					{
-						// Use the CalculateDeltaSeconds function
+						// Calculate delta_seconds
 						float delta_seconds = CalculateDeltaSeconds();
 
 						// Clamp delta_seconds to a valid range
@@ -1154,31 +1154,29 @@ IN_Update(void)
 							delta_seconds = 0.016f;  // Default to ~60 FPS
 						}
 
-						// Create gyro input vector with calibrated values
+						// Use raw calibrated gyro data
 						Vector3 gyroInput = Vec3_New(
-							(event.csensor.data[0] - gyro_calibration_x->value) * 2.0f,  // Amplify Pitch
-							-(event.csensor.data[1] - gyro_calibration_y->value) * 2.0f, // Amplify and invert Yaw
-							event.csensor.data[2] - gyro_calibration_z->value            // Roll remains unchanged
+							event.csensor.data[0] - gyro_calibration_x->value,  // Pitch
+							-(event.csensor.data[1] - gyro_calibration_y->value),  // Inverted Yaw
+							event.csensor.data[2] - gyro_calibration_z->value   // Roll remains unchanged
 						);
 
-						// Transform gyro input to World Space
+						// Transform to World Space using raw data
 						Vector3 worldSpaceGyro = TransformToWorldSpace(
-							gyroInput, gravNorm, gyro_yawsensitivity->value * 1.5f,  // Adjust yaw sensitivity
-							delta_seconds
+							gyroInput, gravNorm, 1.0f, delta_seconds
 						);
 
-						// Update yaw and pitch with transformed values
-						gyro_yaw = worldSpaceGyro.x;  // Transformed Yaw
-						gyro_pitch = worldSpaceGyro.y;  // Transformed Pitch
+						// Directly update gyro_yaw and gyro_pitch without scaling
+						gyro_yaw = worldSpaceGyro.x * gyro_yawsensitivity->value;
+						gyro_pitch = worldSpaceGyro.y * gyro_pitchsensitivity->value;
 
-						// Debugging logs
+						// Debugging logs for validation
 						printf("Delta seconds: %f\n", delta_seconds);
-						printf("Gyro Input: X=%f, Y=%f, Z=%f\n", gyroInput.x, gyroInput.y, gyroInput.z);
+						printf("Gyro Input: Pitch=%f, Yaw=%f\n", gyroInput.x, gyroInput.y);
 						printf("World Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
 
 						break;
 					}
-
 
 					default:
 						gyro_yaw = gyro_pitch = 0;  // Reset for unsupported modes
@@ -1218,7 +1216,7 @@ IN_Update(void)
 
 						case 4:  // World Space mode
 						{
-							// Use the CalculateDeltaSeconds function
+							// Calculate delta_seconds
 							float delta_seconds = CalculateDeltaSeconds();
 
 							// Clamp delta_seconds to a valid range
@@ -1226,26 +1224,25 @@ IN_Update(void)
 								delta_seconds = 0.016f;  // Default to ~60 FPS
 							}
 
-							// Create gyro input vector with calibrated values
+							// Use raw calibrated gyro data
 							Vector3 gyroInput = Vec3_New(
-								(axis_value - gyro_calibration_x->value) * 2.0f,   // Amplify Pitch
-								-(gyro_pitch * 2.0f),                              // Amplify and invert Yaw
-								0.0f                                              // Roll remains unused
+								axis_value - gyro_calibration_x->value,  // Pitch
+								-gyro_pitch,                             // Inverted Yaw
+								0.0f                                     // Roll remains unused
 							);
 
-							// Transform gyro input to World Space
+							// Transform to World Space using raw data
 							Vector3 worldSpaceGyro = TransformToWorldSpace(
-								gyroInput, gravNorm, gyro_yawsensitivity->value * 1.5f,  // Adjust yaw sensitivity
-								delta_seconds
+								gyroInput, gravNorm, 1.0f, delta_seconds
 							);
 
-							// Update yaw and pitch with transformed values
-							gyro_yaw = worldSpaceGyro.x;  // Transformed Yaw
-							gyro_pitch = worldSpaceGyro.y;  // Transformed Pitch
+							// Directly update gyro_yaw and gyro_pitch without scaling
+							gyro_yaw = worldSpaceGyro.x * gyro_yawsensitivity->value;
+							gyro_pitch = worldSpaceGyro.y * gyro_pitchsensitivity->value;
 
-							// Debugging logs
+							// Debugging logs for validation
 							printf("Delta seconds: %f\n", delta_seconds);
-							printf("Gyro Input: X=%f, Y=%f\n", gyroInput.x, gyroInput.y);
+							printf("Gyro Input: Pitch=%f, Yaw=%f\n", gyroInput.x, gyroInput.y);
 							printf("World Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
 
 							break;
