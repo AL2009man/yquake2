@@ -26,10 +26,10 @@
  *
  * Flick Stick handling is based on:
  * http://gyrowiki.jibbsmart.com/blog:good-gyro-controls-part-2:the-flick-stick
- *
+ * 
  * Gyro Space (Local Space, Player Space, World Space) is based on:
  * http://gyrowiki.jibbsmart.com/blog:player-space-gyro-and-alternatives-explained
- *
+ * 
  * =======================================================================
  *
  * This is the Quake II input system backend, implemented with SDL.
@@ -103,10 +103,11 @@ static int Vec3_IsZero(Vector3 v) {
 static float CalculateDeltaSeconds(void) {
 	static int last_frame_time = 0;
 	int current_time = Sys_Milliseconds();
-	float delta = (current_time - last_frame_time) / 1000.0f;
+	float delta = ((float)(current_time - last_frame_time)) / 1000.0f;  // Convert to seconds
 	last_frame_time = current_time;
 	return delta;
 }
+
 
 // ---- Space Transformations ----
 
@@ -115,26 +116,41 @@ static Vector3 TransformToPlayerSpace(float yaw, float pitch, Matrix4 playerView
 }
 
 static Vector3 TransformToWorldSpace(Vector3 gyro, Vector3 gravNorm, float sensitivity, float delta) {
+	// Validate and normalize gravNorm
 	if (Vec3_IsZero(gravNorm)) {
 		gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Fallback to "up"
+		printf("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
 	}
 
+	printf("gravNorm before normalization: X=%f, Y=%f, Z=%f\n", gravNorm.x, gravNorm.y, gravNorm.z);
+	gravNorm = Vec3_Normalize(gravNorm);  // Ensure gravNorm is a unit vector
+	printf("gravNorm after normalization: X=%f, Y=%f, Z=%f\n", gravNorm.x, gravNorm.y, gravNorm.z);
+
+	// Calculate flatness and "upness" of gravNorm
 	float flatness = fabsf(gravNorm.y);
 	float upness = fabsf(gravNorm.z);
 	float sideReduction = clamp((fmaxf(flatness, upness) - 0.125f) / 0.125f, 0.0f, 1.0f);
 
+	// Initialize result with Yaw computation
 	Vector3 result = {
 		-Vec3_Dot(gyro, gravNorm) * sensitivity * delta,  // Yaw
 		0.0f,                                            // Pitch placeholder
 		0.0f                                             // Roll unused
 	};
 
+	// Calculate pitch vector and apply side reduction
 	float gravDotPitchAxis = gravNorm.x;
 	Vector3 pitchVector = Vec3_Subtract(Vec3_New(1.0f, 0.0f, 0.0f), Vec3_Scale(gravNorm, gravDotPitchAxis));
+
 	if (!Vec3_IsZero(pitchVector)) {
 		pitchVector = Vec3_Normalize(pitchVector);
 		result.y = sideReduction * Vec3_Dot(gyro, pitchVector) * sensitivity * delta;
 	}
+
+	// Debugging output for troubleshooting
+	printf("Gyro Input: X=%f, Y=%f, Z=%f\n", gyro.x, gyro.y, gyro.z);
+	printf("Pitch Vector: X=%f, Y=%f, Z=%f\n", pitchVector.x, pitchVector.y, pitchVector.z);
+	printf("Resultant World Space Vector: Yaw=%f, Pitch=%f\n", result.x, result.y);
 
 	return result;
 }
@@ -150,7 +166,7 @@ static Vector3 TransformToWorldSpace(Vector3 gyro, Vector3 gravNorm, float sensi
 // ----
 
 enum {
-	LAYOUT_DEFAULT = 0,
+	LAYOUT_DEFAULT			= 0,
 	LAYOUT_SOUTHPAW,
 	LAYOUT_LEGACY,
 	LAYOUT_LEGACY_SOUTHPAW,
@@ -197,21 +213,21 @@ gamepad_labels_t joy_current_lbls = LBL_SDL;
 qboolean japanese_confirm = false;
 
 // Console Variables
-cvar_t* freelook;
-cvar_t* lookstrafe;
-cvar_t* m_forward;
-cvar_t* m_pitch;
-cvar_t* m_side;
-cvar_t* m_up;
-cvar_t* m_yaw;
-static cvar_t* sensitivity;
+cvar_t *freelook;
+cvar_t *lookstrafe;
+cvar_t *m_forward;
+cvar_t *m_pitch;
+cvar_t *m_side;
+cvar_t *m_up;
+cvar_t *m_yaw;
+static cvar_t *sensitivity;
 
-static cvar_t* exponential_speedup;
-static cvar_t* in_grab;
-static cvar_t* m_filter;
-static cvar_t* windowed_pauseonfocuslost;
-static cvar_t* windowed_mouse;
-static cvar_t* haptic_feedback_filter;
+static cvar_t *exponential_speedup;
+static cvar_t *in_grab;
+static cvar_t *m_filter;
+static cvar_t *windowed_pauseonfocuslost;
+static cvar_t *windowed_mouse;
+static cvar_t *haptic_feedback_filter;
 
 // ----
 
@@ -229,8 +245,8 @@ typedef struct haptic_effects_cache {
 
 qboolean show_gamepad = false, show_haptic = false, show_gyro = false;
 
-static SDL_Haptic* joystick_haptic = NULL;
-static SDL_GameController* controller = NULL;
+static SDL_Haptic *joystick_haptic = NULL;
+static SDL_GameController *controller = NULL;
 
 #define HAPTIC_EFFECT_LIST_SIZE 16
 
@@ -240,49 +256,49 @@ static int last_haptic_effect_pos = 0;
 static haptic_effects_cache_t last_haptic_effect[HAPTIC_EFFECT_LIST_SIZE];
 
 // Gamepad labels' style (Xbox, Playstation, etc.) requested by user
-static cvar_t* joy_labels;
+static cvar_t *joy_labels;
 
 // Gamepad style for confirm and cancel buttons (traditional or japanese)
-static cvar_t* joy_confirm;
+static cvar_t *joy_confirm;
 
 // Joystick sensitivity
-static cvar_t* joy_yawsensitivity;
-static cvar_t* joy_pitchsensitivity;
-static cvar_t* joy_forwardsensitivity;
-static cvar_t* joy_sidesensitivity;
+static cvar_t *joy_yawsensitivity;
+static cvar_t *joy_pitchsensitivity;
+static cvar_t *joy_forwardsensitivity;
+static cvar_t *joy_sidesensitivity;
 
 // Joystick's analog sticks configuration
-cvar_t* joy_layout;
-static cvar_t* joy_left_expo;
-static cvar_t* joy_left_snapaxis;
-static cvar_t* joy_left_deadzone;
-static cvar_t* joy_right_expo;
-static cvar_t* joy_right_snapaxis;
-static cvar_t* joy_right_deadzone;
-static cvar_t* joy_flick_threshold;
-static cvar_t* joy_flick_smoothed;
+cvar_t *joy_layout;
+static cvar_t *joy_left_expo;
+static cvar_t *joy_left_snapaxis;
+static cvar_t *joy_left_deadzone;
+static cvar_t *joy_right_expo;
+static cvar_t *joy_right_snapaxis;
+static cvar_t *joy_right_deadzone;
+static cvar_t *joy_flick_threshold;
+static cvar_t *joy_flick_smoothed;
 
 // Joystick haptic
-static cvar_t* joy_haptic_magnitude;
-static cvar_t* joy_haptic_distance;
+static cvar_t *joy_haptic_magnitude;
+static cvar_t *joy_haptic_distance;
 
 // Gyro mode (0=off, 3=on, 1-2=uses button to enable/disable)
 cvar_t* gyro_mode;
 cvar_t* gyro_turning_axis;	// yaw, roll, player space and local space
 
 // Gyro sensitivity
-static cvar_t* gyro_yawsensitivity;
-static cvar_t* gyro_pitchsensitivity;
-static cvar_t* gyro_tightening;
+static cvar_t *gyro_yawsensitivity;
+static cvar_t *gyro_pitchsensitivity;
+static cvar_t *gyro_tightening;
 
 // Gyro is being used in this very moment
 static qboolean gyro_active = false;
 
 // Gyro calibration
 static float gyro_accum[3];
-static cvar_t* gyro_calibration_x;
-static cvar_t* gyro_calibration_y;
-static cvar_t* gyro_calibration_z;
+static cvar_t *gyro_calibration_x;
+static cvar_t *gyro_calibration_y;
+static cvar_t *gyro_calibration_z;
 
 // If the used SDL version doesn't support gamepad sensors...
 #if !SDL_VERSION_ATLEAST(2, 0, 14)
@@ -294,7 +310,7 @@ static cvar_t* gyro_calibration_z;
 static unsigned int num_samples;
 #else	// gyro can be read as a "secondary joystick" exposed by dkms-hid-nintendo
 static unsigned int num_samples[3];
-static SDL_Joystick* imu_joystick = NULL;	// gyro "joystick"
+static SDL_Joystick *imu_joystick = NULL;	// gyro "joystick"
 #define IMU_JOY_AXIS_GYRO_ROLL 3
 #define IMU_JOY_AXIS_GYRO_PITCH 4
 #define IMU_JOY_AXIS_GYRO_YAW 5
@@ -336,211 +352,211 @@ IN_TranslateSDLtoQ2Key(unsigned int keysym)
 	/* These must be translated */
 	switch (keysym)
 	{
-	case SDLK_TAB:
-		key = K_TAB;
-		break;
-	case SDLK_RETURN:
-		key = K_ENTER;
-		break;
-	case SDLK_ESCAPE:
-		key = K_ESCAPE;
-		break;
-	case SDLK_BACKSPACE:
-		key = K_BACKSPACE;
-		break;
+		case SDLK_TAB:
+			key = K_TAB;
+			break;
+		case SDLK_RETURN:
+			key = K_ENTER;
+			break;
+		case SDLK_ESCAPE:
+			key = K_ESCAPE;
+			break;
+		case SDLK_BACKSPACE:
+			key = K_BACKSPACE;
+			break;
 #ifdef __APPLE__
-	case SDLK_RGUI:
-	case SDLK_LGUI:
-		key = K_COMMAND;
-		break;
+		case SDLK_RGUI:
+		case SDLK_LGUI:
+			key = K_COMMAND;
+			break;
 #else
-	case SDLK_RGUI:
-	case SDLK_LGUI:
-		key = K_SUPER;
-		break;
+		case SDLK_RGUI:
+		case SDLK_LGUI:
+			key = K_SUPER;
+			break;
 #endif
-	case SDLK_CAPSLOCK:
-		key = K_CAPSLOCK;
-		break;
-	case SDLK_POWER:
-		key = K_POWER;
-		break;
-	case SDLK_PAUSE:
-		key = K_PAUSE;
-		break;
+		case SDLK_CAPSLOCK:
+			key = K_CAPSLOCK;
+			break;
+		case SDLK_POWER:
+			key = K_POWER;
+			break;
+		case SDLK_PAUSE:
+			key = K_PAUSE;
+			break;
 
-	case SDLK_UP:
-		key = K_UPARROW;
-		break;
-	case SDLK_DOWN:
-		key = K_DOWNARROW;
-		break;
-	case SDLK_LEFT:
-		key = K_LEFTARROW;
-		break;
-	case SDLK_RIGHT:
-		key = K_RIGHTARROW;
-		break;
+		case SDLK_UP:
+			key = K_UPARROW;
+			break;
+		case SDLK_DOWN:
+			key = K_DOWNARROW;
+			break;
+		case SDLK_LEFT:
+			key = K_LEFTARROW;
+			break;
+		case SDLK_RIGHT:
+			key = K_RIGHTARROW;
+			break;
 
-	case SDLK_RALT:
-	case SDLK_LALT:
-		key = K_ALT;
-		break;
-	case SDLK_LCTRL:
-	case SDLK_RCTRL:
-		key = K_CTRL;
-		break;
-	case SDLK_LSHIFT:
-	case SDLK_RSHIFT:
-		key = K_SHIFT;
-		break;
-	case SDLK_INSERT:
-		key = K_INS;
-		break;
-	case SDLK_DELETE:
-		key = K_DEL;
-		break;
-	case SDLK_PAGEDOWN:
-		key = K_PGDN;
-		break;
-	case SDLK_PAGEUP:
-		key = K_PGUP;
-		break;
-	case SDLK_HOME:
-		key = K_HOME;
-		break;
-	case SDLK_END:
-		key = K_END;
-		break;
+		case SDLK_RALT:
+		case SDLK_LALT:
+			key = K_ALT;
+			break;
+		case SDLK_LCTRL:
+		case SDLK_RCTRL:
+			key = K_CTRL;
+			break;
+		case SDLK_LSHIFT:
+		case SDLK_RSHIFT:
+			key = K_SHIFT;
+			break;
+		case SDLK_INSERT:
+			key = K_INS;
+			break;
+		case SDLK_DELETE:
+			key = K_DEL;
+			break;
+		case SDLK_PAGEDOWN:
+			key = K_PGDN;
+			break;
+		case SDLK_PAGEUP:
+			key = K_PGUP;
+			break;
+		case SDLK_HOME:
+			key = K_HOME;
+			break;
+		case SDLK_END:
+			key = K_END;
+			break;
 
-	case SDLK_F1:
-		key = K_F1;
-		break;
-	case SDLK_F2:
-		key = K_F2;
-		break;
-	case SDLK_F3:
-		key = K_F3;
-		break;
-	case SDLK_F4:
-		key = K_F4;
-		break;
-	case SDLK_F5:
-		key = K_F5;
-		break;
-	case SDLK_F6:
-		key = K_F6;
-		break;
-	case SDLK_F7:
-		key = K_F7;
-		break;
-	case SDLK_F8:
-		key = K_F8;
-		break;
-	case SDLK_F9:
-		key = K_F9;
-		break;
-	case SDLK_F10:
-		key = K_F10;
-		break;
-	case SDLK_F11:
-		key = K_F11;
-		break;
-	case SDLK_F12:
-		key = K_F12;
-		break;
-	case SDLK_F13:
-		key = K_F13;
-		break;
-	case SDLK_F14:
-		key = K_F14;
-		break;
-	case SDLK_F15:
-		key = K_F15;
-		break;
+		case SDLK_F1:
+			key = K_F1;
+			break;
+		case SDLK_F2:
+			key = K_F2;
+			break;
+		case SDLK_F3:
+			key = K_F3;
+			break;
+		case SDLK_F4:
+			key = K_F4;
+			break;
+		case SDLK_F5:
+			key = K_F5;
+			break;
+		case SDLK_F6:
+			key = K_F6;
+			break;
+		case SDLK_F7:
+			key = K_F7;
+			break;
+		case SDLK_F8:
+			key = K_F8;
+			break;
+		case SDLK_F9:
+			key = K_F9;
+			break;
+		case SDLK_F10:
+			key = K_F10;
+			break;
+		case SDLK_F11:
+			key = K_F11;
+			break;
+		case SDLK_F12:
+			key = K_F12;
+			break;
+		case SDLK_F13:
+			key = K_F13;
+			break;
+		case SDLK_F14:
+			key = K_F14;
+			break;
+		case SDLK_F15:
+			key = K_F15;
+			break;
 
-	case SDLK_KP_7:
-		key = K_KP_HOME;
-		break;
-	case SDLK_KP_8:
-		key = K_KP_UPARROW;
-		break;
-	case SDLK_KP_9:
-		key = K_KP_PGUP;
-		break;
-	case SDLK_KP_4:
-		key = K_KP_LEFTARROW;
-		break;
-	case SDLK_KP_5:
-		key = K_KP_5;
-		break;
-	case SDLK_KP_6:
-		key = K_KP_RIGHTARROW;
-		break;
-	case SDLK_KP_1:
-		key = K_KP_END;
-		break;
-	case SDLK_KP_2:
-		key = K_KP_DOWNARROW;
-		break;
-	case SDLK_KP_3:
-		key = K_KP_PGDN;
-		break;
-	case SDLK_KP_ENTER:
-		key = K_KP_ENTER;
-		break;
-	case SDLK_KP_0:
-		key = K_KP_INS;
-		break;
-	case SDLK_KP_PERIOD:
-		key = K_KP_DEL;
-		break;
-	case SDLK_KP_DIVIDE:
-		key = K_KP_SLASH;
-		break;
-	case SDLK_KP_MINUS:
-		key = K_KP_MINUS;
-		break;
-	case SDLK_KP_PLUS:
-		key = K_KP_PLUS;
-		break;
-	case SDLK_NUMLOCKCLEAR:
-		key = K_KP_NUMLOCK;
-		break;
-	case SDLK_KP_MULTIPLY:
-		key = K_KP_STAR;
-		break;
-	case SDLK_KP_EQUALS:
-		key = K_KP_EQUALS;
-		break;
+		case SDLK_KP_7:
+			key = K_KP_HOME;
+			break;
+		case SDLK_KP_8:
+			key = K_KP_UPARROW;
+			break;
+		case SDLK_KP_9:
+			key = K_KP_PGUP;
+			break;
+		case SDLK_KP_4:
+			key = K_KP_LEFTARROW;
+			break;
+		case SDLK_KP_5:
+			key = K_KP_5;
+			break;
+		case SDLK_KP_6:
+			key = K_KP_RIGHTARROW;
+			break;
+		case SDLK_KP_1:
+			key = K_KP_END;
+			break;
+		case SDLK_KP_2:
+			key = K_KP_DOWNARROW;
+			break;
+		case SDLK_KP_3:
+			key = K_KP_PGDN;
+			break;
+		case SDLK_KP_ENTER:
+			key = K_KP_ENTER;
+			break;
+		case SDLK_KP_0:
+			key = K_KP_INS;
+			break;
+		case SDLK_KP_PERIOD:
+			key = K_KP_DEL;
+			break;
+		case SDLK_KP_DIVIDE:
+			key = K_KP_SLASH;
+			break;
+		case SDLK_KP_MINUS:
+			key = K_KP_MINUS;
+			break;
+		case SDLK_KP_PLUS:
+			key = K_KP_PLUS;
+			break;
+		case SDLK_NUMLOCKCLEAR:
+			key = K_KP_NUMLOCK;
+			break;
+		case SDLK_KP_MULTIPLY:
+			key = K_KP_STAR;
+			break;
+		case SDLK_KP_EQUALS:
+			key = K_KP_EQUALS;
+			break;
 
-	case SDLK_APPLICATION:
-		key = K_COMPOSE;
-		break;
-	case SDLK_MODE:
-		key = K_MODE;
-		break;
-	case SDLK_HELP:
-		key = K_HELP;
-		break;
-	case SDLK_PRINTSCREEN:
-		key = K_PRINT;
-		break;
-	case SDLK_SYSREQ:
-		key = K_SYSREQ;
-		break;
-	case SDLK_SCROLLLOCK:
-		key = K_SCROLLOCK;
-		break;
-	case SDLK_MENU:
-		key = K_MENU;
-		break;
-	case SDLK_UNDO:
-		key = K_UNDO;
-		break;
+		case SDLK_APPLICATION:
+			key = K_COMPOSE;
+			break;
+		case SDLK_MODE:
+			key = K_MODE;
+			break;
+		case SDLK_HELP:
+			key = K_HELP;
+			break;
+		case SDLK_PRINTSCREEN:
+			key = K_PRINT;
+			break;
+		case SDLK_SYSREQ:
+			key = K_SYSREQ;
+			break;
+		case SDLK_SCROLLLOCK:
+			key = K_SCROLLOCK;
+			break;
+		case SDLK_MENU:
+			key = K_MENU;
+			break;
+		case SDLK_UNDO:
+			key = K_UNDO;
+			break;
 
-	default:
-		break;
+		default:
+			break;
 	}
 
 	return key;
@@ -552,61 +568,61 @@ IN_TranslateScancodeToQ2Key(SDL_Scancode sc)
 
 #define MY_SC_CASE(X) case SDL_SCANCODE_ ## X : return K_SC_ ## X;
 
-	switch ((int)sc) // cast to int to shut -Wswitch up
+	switch( (int)sc ) // cast to int to shut -Wswitch up
 	{
 		// case SDL_SCANCODE_A : return K_SC_A;
 		MY_SC_CASE(A)
-			MY_SC_CASE(B)
-			MY_SC_CASE(C)
-			MY_SC_CASE(D)
-			MY_SC_CASE(E)
-			MY_SC_CASE(F)
-			MY_SC_CASE(G)
-			MY_SC_CASE(H)
-			MY_SC_CASE(I)
-			MY_SC_CASE(J)
-			MY_SC_CASE(K)
-			MY_SC_CASE(L)
-			MY_SC_CASE(M)
-			MY_SC_CASE(N)
-			MY_SC_CASE(O)
-			MY_SC_CASE(P)
-			MY_SC_CASE(Q)
-			MY_SC_CASE(R)
-			MY_SC_CASE(S)
-			MY_SC_CASE(T)
-			MY_SC_CASE(U)
-			MY_SC_CASE(V)
-			MY_SC_CASE(W)
-			MY_SC_CASE(X)
-			MY_SC_CASE(Y)
-			MY_SC_CASE(Z)
-			MY_SC_CASE(MINUS)
-			MY_SC_CASE(EQUALS)
-			MY_SC_CASE(LEFTBRACKET)
-			MY_SC_CASE(RIGHTBRACKET)
-			MY_SC_CASE(BACKSLASH)
-			MY_SC_CASE(NONUSHASH)
-			MY_SC_CASE(SEMICOLON)
-			MY_SC_CASE(APOSTROPHE)
-			MY_SC_CASE(GRAVE)
-			MY_SC_CASE(COMMA)
-			MY_SC_CASE(PERIOD)
-			MY_SC_CASE(SLASH)
-			MY_SC_CASE(NONUSBACKSLASH)
-			MY_SC_CASE(INTERNATIONAL1)
-			MY_SC_CASE(INTERNATIONAL2)
-			MY_SC_CASE(INTERNATIONAL3)
-			MY_SC_CASE(INTERNATIONAL4)
-			MY_SC_CASE(INTERNATIONAL5)
-			MY_SC_CASE(INTERNATIONAL6)
-			MY_SC_CASE(INTERNATIONAL7)
-			MY_SC_CASE(INTERNATIONAL8)
-			MY_SC_CASE(INTERNATIONAL9)
-			MY_SC_CASE(THOUSANDSSEPARATOR)
-			MY_SC_CASE(DECIMALSEPARATOR)
-			MY_SC_CASE(CURRENCYUNIT)
-			MY_SC_CASE(CURRENCYSUBUNIT)
+		MY_SC_CASE(B)
+		MY_SC_CASE(C)
+		MY_SC_CASE(D)
+		MY_SC_CASE(E)
+		MY_SC_CASE(F)
+		MY_SC_CASE(G)
+		MY_SC_CASE(H)
+		MY_SC_CASE(I)
+		MY_SC_CASE(J)
+		MY_SC_CASE(K)
+		MY_SC_CASE(L)
+		MY_SC_CASE(M)
+		MY_SC_CASE(N)
+		MY_SC_CASE(O)
+		MY_SC_CASE(P)
+		MY_SC_CASE(Q)
+		MY_SC_CASE(R)
+		MY_SC_CASE(S)
+		MY_SC_CASE(T)
+		MY_SC_CASE(U)
+		MY_SC_CASE(V)
+		MY_SC_CASE(W)
+		MY_SC_CASE(X)
+		MY_SC_CASE(Y)
+		MY_SC_CASE(Z)
+		MY_SC_CASE(MINUS)
+		MY_SC_CASE(EQUALS)
+		MY_SC_CASE(LEFTBRACKET)
+		MY_SC_CASE(RIGHTBRACKET)
+		MY_SC_CASE(BACKSLASH)
+		MY_SC_CASE(NONUSHASH)
+		MY_SC_CASE(SEMICOLON)
+		MY_SC_CASE(APOSTROPHE)
+		MY_SC_CASE(GRAVE)
+		MY_SC_CASE(COMMA)
+		MY_SC_CASE(PERIOD)
+		MY_SC_CASE(SLASH)
+		MY_SC_CASE(NONUSBACKSLASH)
+		MY_SC_CASE(INTERNATIONAL1)
+		MY_SC_CASE(INTERNATIONAL2)
+		MY_SC_CASE(INTERNATIONAL3)
+		MY_SC_CASE(INTERNATIONAL4)
+		MY_SC_CASE(INTERNATIONAL5)
+		MY_SC_CASE(INTERNATIONAL6)
+		MY_SC_CASE(INTERNATIONAL7)
+		MY_SC_CASE(INTERNATIONAL8)
+		MY_SC_CASE(INTERNATIONAL9)
+		MY_SC_CASE(THOUSANDSSEPARATOR)
+		MY_SC_CASE(DECIMALSEPARATOR)
+		MY_SC_CASE(CURRENCYUNIT)
+		MY_SC_CASE(CURRENCYSUBUNIT)
 	}
 
 #undef MY_SC_CASE
@@ -634,34 +650,34 @@ IN_GamepadLabels_Changed(void)
 	{
 		switch (SDL_GameControllerGetType(controller))
 		{
-		case SDL_CONTROLLER_TYPE_XBOX360:
-		case SDL_CONTROLLER_TYPE_XBOXONE:
-			joy_current_lbls = LBL_XBOX;
-			return;
+			case SDL_CONTROLLER_TYPE_XBOX360:
+			case SDL_CONTROLLER_TYPE_XBOXONE:
+				joy_current_lbls = LBL_XBOX;
+				return;
 
-		case SDL_CONTROLLER_TYPE_PS3:
-		case SDL_CONTROLLER_TYPE_PS4:
+			case SDL_CONTROLLER_TYPE_PS3:
+			case SDL_CONTROLLER_TYPE_PS4:
 #if SDL_VERSION_ATLEAST(2, 0, 14)
-		case SDL_CONTROLLER_TYPE_PS5:
+			case SDL_CONTROLLER_TYPE_PS5:
 #endif // SDL_VERSION_ATLEAST(2, 0, 14)
-			joy_current_lbls = LBL_PLAYSTATION;
-			return;
+				joy_current_lbls = LBL_PLAYSTATION;
+				return;
 
-		case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
+			case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
 #if SDL_VERSION_ATLEAST(2, 24, 0)
-		case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+			case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
 #endif // SDL_VERSION_ATLEAST(2, 24, 0)
-			joy_current_lbls = LBL_SWITCH;
-		default:
-			return;
+				joy_current_lbls = LBL_SWITCH;
+			default:
+				return;
 		}
 	}
 	else
 #endif // SDL_VERSION_ATLEAST(2, 0, 12)
-		if (requested >= LBL_SDL && requested < LBL_MAX_COUNT)
-		{
-			joy_current_lbls = (gamepad_labels_t)requested;
-		}
+	if (requested >= LBL_SDL && requested < LBL_MAX_COUNT)
+	{
+		joy_current_lbls = (gamepad_labels_t)requested;
+	}
 }
 
 /*
@@ -680,21 +696,21 @@ IN_GamepadConfirm_Changed(void)
 	{
 		switch (SDL_GameControllerGetType(controller))
 		{
-		case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
+			case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
 #if SDL_VERSION_ATLEAST(2, 24, 0)
-		case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+			case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
 #endif // SDL_VERSION_ATLEAST(2, 24, 0)
-			japanese_confirm = true;
-		default:
-			return;
+				japanese_confirm = true;
+			default:
+				return;
 		}
 	}
 	else
 #endif // SDL_VERSION_ATLEAST(2, 0, 12)
-		if (requested == 1)
-		{
-			japanese_confirm = true;
-		}
+	if (requested == 1)
+	{
+		japanese_confirm = true;
+	}
 }
 
 static void
@@ -712,7 +728,7 @@ IN_GyroMode_Changed(void)
 }
 
 static void
-IN_VirtualKeyEvent(int keynum, qboolean* state_store, qboolean new_state)
+IN_VirtualKeyEvent(int keynum, qboolean *state_store, qboolean new_state)
 {
 	if (new_state != *state_store)
 	{
@@ -723,14 +739,14 @@ IN_VirtualKeyEvent(int keynum, qboolean* state_store, qboolean new_state)
 
 qboolean IN_NumpadIsOn()
 {
-	SDL_Keymod mod = SDL_GetModState();
+    SDL_Keymod mod = SDL_GetModState();
 
-	if ((mod & KMOD_NUM) == KMOD_NUM)
-	{
-		return true;
-	}
+    if ((mod & KMOD_NUM) == KMOD_NUM)
+    {
+        return true;
+    }
 
-	return false;
+    return false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -749,25 +765,29 @@ IN_Update(void)
 	float delta_seconds = (float)(current_time - last_frame_time) / 1000.0f;  // Convert to seconds
 	last_frame_time = current_time;
 
-	qboolean want_grab;
-	SDL_Event event;
-	unsigned int key;
+	// Example usage: Scale movement or other logic
+	gyro_yaw *= delta_seconds;  // Scale gyro input by delta_seconds
+	gyro_pitch *= delta_seconds;  // Scale pitch input by delta_seconds
 
-	static qboolean left_trigger = false;
-	static qboolean right_trigger = false;
-	static qboolean left_stick[4] = { false, false, false, false };   // left, right, up, down virtual keys
+    qboolean want_grab;
+    SDL_Event event;
+    unsigned int key;
 
-	static int consoleKeyCode = 0;
+    static qboolean left_trigger = false;
+    static qboolean right_trigger = false;
+    static qboolean left_stick[4] = { false, false, false, false };   // left, right, up, down virtual keys
 
-	// Placeholder identity matrix for Player Space calculations
-	Matrix4 playerViewMatrix = {
-		.m = {
-			{1.0f, 0.0f, 0.0f, 0.0f},
-			{0.0f, 1.0f, 0.0f, 0.0f},
-			{0.0f, 0.0f, 1.0f, 0.0f},
-			{0.0f, 0.0f, 0.0f, 1.0f}
-		}
-	};
+    static int consoleKeyCode = 0;
+
+    // Placeholder identity matrix for Player Space calculations
+    Matrix4 playerViewMatrix = {
+        .m = {
+            {1.0f, 0.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f, 0.0f},
+            {0.0f, 0.0f, 1.0f, 0.0f},
+            {0.0f, 0.0f, 0.0f, 1.0f}
+        }
+    };
 
 	/* Get and process an event */
 	while (SDL_PollEvent(&event))
@@ -775,504 +795,526 @@ IN_Update(void)
 
 		switch (event.type)
 		{
-		case SDL_MOUSEWHEEL:
-			Key_Event((event.wheel.y > 0 ? K_MWHEELUP : K_MWHEELDOWN), true, true);
-			Key_Event((event.wheel.y > 0 ? K_MWHEELUP : K_MWHEELDOWN), false, true);
-			break;
-
-		case SDL_MOUSEBUTTONDOWN:
-		case SDL_MOUSEBUTTONUP:
-			switch (event.button.button)
-			{
-			case SDL_BUTTON_LEFT:
-				key = K_MOUSE1;
+			case SDL_MOUSEWHEEL:
+				Key_Event((event.wheel.y > 0 ? K_MWHEELUP : K_MWHEELDOWN), true, true);
+				Key_Event((event.wheel.y > 0 ? K_MWHEELUP : K_MWHEELDOWN), false, true);
 				break;
-			case SDL_BUTTON_MIDDLE:
-				key = K_MOUSE3;
-				break;
-			case SDL_BUTTON_RIGHT:
-				key = K_MOUSE2;
-				break;
-			case SDL_BUTTON_X1:
-				key = K_MOUSE4;
-				break;
-			case SDL_BUTTON_X2:
-				key = K_MOUSE5;
-				break;
-			default:
-				return;
-			}
 
-			Key_Event(key, (event.type == SDL_MOUSEBUTTONDOWN), true);
-			break;
-
-		case SDL_MOUSEMOTION:
-			if (cls.key_dest == key_game && (int)cl_paused->value == 0)
-			{
-				mouse_x += event.motion.xrel;
-				mouse_y += event.motion.yrel;
-			}
-			break;
-
-		case SDL_TEXTINPUT:
-		{
-			int c = event.text.text[0];
-			// also make sure we don't get the char that corresponds to the
-			// "console key" (like "^" or "`") as text input
-			if ((c >= ' ') && (c <= '~') && c != consoleKeyCode)
-			{
-				Char_Event(c);
-			}
-		}
-
-		break;
-
-		case SDL_KEYDOWN:
-		case SDL_KEYUP:
-		{
-			qboolean down = (event.type == SDL_KEYDOWN);
-
-			/* workaround for AZERTY-keyboards, which don't have 1, 2, ..., 9, 0 in first row:
-			 * always map those physical keys (scancodes) to those keycodes anyway
-			 * see also https://bugzilla.libsdl.org/show_bug.cgi?id=3188 */
-			SDL_Scancode sc = event.key.keysym.scancode;
-
-			if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_0)
-			{
-				/* Note that the SDL_SCANCODEs are SDL_SCANCODE_1, _2, ..., _9, SDL_SCANCODE_0
-				 * while in ASCII it's '0', '1', ..., '9' => handle 0 and 1-9 separately
-				 * (quake2 uses the ASCII values for those keys) */
-				int key = '0'; /* implicitly handles SDL_SCANCODE_0 */
-
-				if (sc <= SDL_SCANCODE_9)
+			case SDL_MOUSEBUTTONDOWN:
+			case SDL_MOUSEBUTTONUP:
+				switch (event.button.button)
 				{
-					key = '1' + (sc - SDL_SCANCODE_1);
+					case SDL_BUTTON_LEFT:
+						key = K_MOUSE1;
+						break;
+					case SDL_BUTTON_MIDDLE:
+						key = K_MOUSE3;
+						break;
+					case SDL_BUTTON_RIGHT:
+						key = K_MOUSE2;
+						break;
+					case SDL_BUTTON_X1:
+						key = K_MOUSE4;
+						break;
+					case SDL_BUTTON_X2:
+						key = K_MOUSE5;
+						break;
+					default:
+						return;
 				}
 
-				Key_Event(key, down, false);
-			}
-			else
-			{
-				SDL_Keycode kc = event.key.keysym.sym;
-				if (sc == SDL_SCANCODE_GRAVE && kc != '\'' && kc != '"')
+				Key_Event(key, (event.type == SDL_MOUSEBUTTONDOWN), true);
+				break;
+
+			case SDL_MOUSEMOTION:
+				if (cls.key_dest == key_game && (int) cl_paused->value == 0)
 				{
-					// special case/hack: open the console with the "console key"
-					// (beneath Esc, left of 1, above Tab)
-					// but not if the keycode for this is a quote (like on Brazilian
-					// keyboards) - otherwise you couldn't type them in the console
-					if ((event.key.keysym.mod & (KMOD_CAPS | KMOD_SHIFT | KMOD_ALT | KMOD_CTRL | KMOD_GUI)) == 0)
+					mouse_x += event.motion.xrel;
+					mouse_y += event.motion.yrel;
+				}
+				break;
+
+			case SDL_TEXTINPUT:
+			{
+				int c = event.text.text[0];
+				// also make sure we don't get the char that corresponds to the
+				// "console key" (like "^" or "`") as text input
+				if ((c >= ' ') && (c <= '~') && c != consoleKeyCode)
+				{
+					Char_Event(c);
+				}
+			}
+
+				break;
+
+			case SDL_KEYDOWN:
+			case SDL_KEYUP:
+			{
+				qboolean down = (event.type == SDL_KEYDOWN);
+
+				/* workaround for AZERTY-keyboards, which don't have 1, 2, ..., 9, 0 in first row:
+				 * always map those physical keys (scancodes) to those keycodes anyway
+				 * see also https://bugzilla.libsdl.org/show_bug.cgi?id=3188 */
+				SDL_Scancode sc = event.key.keysym.scancode;
+
+				if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_0)
+				{
+					/* Note that the SDL_SCANCODEs are SDL_SCANCODE_1, _2, ..., _9, SDL_SCANCODE_0
+					 * while in ASCII it's '0', '1', ..., '9' => handle 0 and 1-9 separately
+					 * (quake2 uses the ASCII values for those keys) */
+					int key = '0'; /* implicitly handles SDL_SCANCODE_0 */
+
+					if (sc <= SDL_SCANCODE_9)
 					{
-						// also, only do this if no modifiers like shift or AltGr or whatever are pressed
-						// so kc will most likely be the ascii char generated by this and can be ignored
-						// in case SDL_TEXTINPUT above (so we don't get ^ or whatever as text in console)
-						// (can't just check for mod == 0 because numlock is a KMOD too)
-						Key_Event(K_CONSOLE, down, true);
-						consoleKeyCode = kc;
+						key = '1' + (sc - SDL_SCANCODE_1);
 					}
-				}
-				else if ((kc >= SDLK_SPACE) && (kc < SDLK_DELETE))
-				{
-					Key_Event(kc, down, false);
+
+					Key_Event(key, down, false);
 				}
 				else
 				{
-					int key = IN_TranslateSDLtoQ2Key(kc);
-					if (key == 0)
+					SDL_Keycode kc = event.key.keysym.sym;
+					if(sc == SDL_SCANCODE_GRAVE && kc != '\'' && kc != '"')
 					{
-						// fallback to scancodes if we don't know the keycode
-						key = IN_TranslateScancodeToQ2Key(sc);
+						// special case/hack: open the console with the "console key"
+						// (beneath Esc, left of 1, above Tab)
+						// but not if the keycode for this is a quote (like on Brazilian
+						// keyboards) - otherwise you couldn't type them in the console
+						if((event.key.keysym.mod & (KMOD_CAPS|KMOD_SHIFT|KMOD_ALT|KMOD_CTRL|KMOD_GUI)) == 0)
+						{
+							// also, only do this if no modifiers like shift or AltGr or whatever are pressed
+							// so kc will most likely be the ascii char generated by this and can be ignored
+							// in case SDL_TEXTINPUT above (so we don't get ^ or whatever as text in console)
+							// (can't just check for mod == 0 because numlock is a KMOD too)
+							Key_Event(K_CONSOLE, down, true);
+							consoleKeyCode = kc;
+						}
 					}
-					if (key != 0)
+					else if ((kc >= SDLK_SPACE) && (kc < SDLK_DELETE))
 					{
-						Key_Event(key, down, true);
+						Key_Event(kc, down, false);
 					}
 					else
 					{
-						Com_DPrintf("Pressed unknown key with SDL_Keycode %d, SDL_Scancode %d.\n", kc, (int)sc);
+						int key = IN_TranslateSDLtoQ2Key(kc);
+						if(key == 0)
+						{
+							// fallback to scancodes if we don't know the keycode
+							key = IN_TranslateScancodeToQ2Key(sc);
+						}
+						if(key != 0)
+						{
+							Key_Event(key, down, true);
+						}
+						else
+						{
+							Com_DPrintf("Pressed unknown key with SDL_Keycode %d, SDL_Scancode %d.\n", kc, (int)sc);
+						}
 					}
 				}
+
+				break;
 			}
 
-			break;
-		}
-
-		case SDL_WINDOWEVENT:
-			if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
-				event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
-			{
-				Key_MarkAllUp();
-
-				if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
+			case SDL_WINDOWEVENT:
+				if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
+					event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
 				{
-					S_Activate(false);
+					Key_MarkAllUp();
 
-					if (windowed_pauseonfocuslost->value != 1)
+					if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST)
 					{
-						Cvar_SetValue("paused", 1);
+						S_Activate(false);
+
+						if (windowed_pauseonfocuslost->value != 1)
+						{
+						    Cvar_SetValue("paused", 1);
+						}
+
+						/* pause music */
+						if (Cvar_VariableValue("ogg_pausewithgame") == 1 &&
+						    OGG_Status() == PLAY && cl.attractloop == false)
+						{
+						    Cbuf_AddText("ogg toggle\n");
+						}
 					}
 
-					/* pause music */
-					if (Cvar_VariableValue("ogg_pausewithgame") == 1 &&
-						OGG_Status() == PLAY && cl.attractloop == false)
+					if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
 					{
-						Cbuf_AddText("ogg toggle\n");
+						S_Activate(true);
+
+						if (windowed_pauseonfocuslost->value == 2)
+						{
+						    Cvar_SetValue("paused", 0);
+						}
+
+						/* play music */
+						if (Cvar_VariableValue("ogg_pausewithgame") == 1 &&
+						    OGG_Status() == PAUSE && cl.attractloop == false &&
+						    cl_paused->value == 0)
+						{
+						    Cbuf_AddText("ogg toggle\n");
+						}
 					}
 				}
-
-				if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
+				else if (event.window.event == SDL_WINDOWEVENT_MOVED)
 				{
-					S_Activate(true);
-
-					if (windowed_pauseonfocuslost->value == 2)
+					// make sure GLimp_GetRefreshRate() will query from SDL again - the window might
+					// be on another display now!
+					glimp_refreshRate = -1.0f;
+				}
+				else if (event.window.event == SDL_WINDOWEVENT_SHOWN)
+				{
+					if (cl_unpaused_scvis->value > 0)
 					{
 						Cvar_SetValue("paused", 0);
 					}
 
 					/* play music */
 					if (Cvar_VariableValue("ogg_pausewithgame") == 1 &&
-						OGG_Status() == PAUSE && cl.attractloop == false &&
-						cl_paused->value == 0)
+					    OGG_Status() == PAUSE && cl.attractloop == false &&
+					    cl_paused->value == 0)
 					{
-						Cbuf_AddText("ogg toggle\n");
+					    Cbuf_AddText("ogg toggle\n");
 					}
 				}
-			}
-			else if (event.window.event == SDL_WINDOWEVENT_MOVED)
-			{
-				// make sure GLimp_GetRefreshRate() will query from SDL again - the window might
-				// be on another display now!
-				glimp_refreshRate = -1.0f;
-			}
-			else if (event.window.event == SDL_WINDOWEVENT_SHOWN)
-			{
-				if (cl_unpaused_scvis->value > 0)
-				{
-					Cvar_SetValue("paused", 0);
-				}
-
-				/* play music */
-				if (Cvar_VariableValue("ogg_pausewithgame") == 1 &&
-					OGG_Status() == PAUSE && cl.attractloop == false &&
-					cl_paused->value == 0)
-				{
-					Cbuf_AddText("ogg toggle\n");
-				}
-			}
-			break;
-
-		case SDL_CONTROLLERBUTTONUP:
-		case SDL_CONTROLLERBUTTONDOWN:
-		{
-			qboolean down = (event.type == SDL_CONTROLLERBUTTONDOWN);
-			unsigned char btn = event.cbutton.button;
-
-			// Handle Esc button first, to override its original key
-			Key_Event((btn == joy_escbutton) ? K_ESCAPE : K_JOY_FIRST_BTN + btn,
-				down, true);
-			break;
-		}
-
-		case SDL_CONTROLLERAXISMOTION:  /* Handle Controller Motion */
-		{
-			int axis_value = event.caxis.value;
-
-			switch (event.caxis.axis)
-			{
-			case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
-				IN_VirtualKeyEvent(K_TRIG_LEFT, &left_trigger, axis_value > 8192);
 				break;
 
-			case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
-				IN_VirtualKeyEvent(K_TRIG_RIGHT, &right_trigger, axis_value > 8192);
+			case SDL_CONTROLLERBUTTONUP:
+			case SDL_CONTROLLERBUTTONDOWN:
+			{
+				qboolean down = (event.type == SDL_CONTROLLERBUTTONDOWN);
+				unsigned char btn = event.cbutton.button;
+
+				// Handle Esc button first, to override its original key
+				Key_Event( (btn == joy_escbutton)? K_ESCAPE : K_JOY_FIRST_BTN + btn,
+					down, true );
 				break;
 			}
 
-			if (!cl_paused->value && cls.key_dest == key_game)
+			case SDL_CONTROLLERAXISMOTION:  /* Handle Controller Motion */
 			{
+				int axis_value = event.caxis.value;
+
 				switch (event.caxis.axis)
 				{
-				case SDL_CONTROLLER_AXIS_LEFTX:
-					joystick_left_x = axis_value;
-					break;
-				case SDL_CONTROLLER_AXIS_LEFTY:
-					joystick_left_y = axis_value;
-					break;
-				case SDL_CONTROLLER_AXIS_RIGHTX:
-					joystick_right_x = axis_value;
-					break;
-				case SDL_CONTROLLER_AXIS_RIGHTY:
-					joystick_right_y = axis_value;
-					break;
-				}
-				break;
-			}
-
-			// Virtual keys to navigate menus with left stick
-			if (cls.key_dest == key_menu)
-			{
-				switch (event.caxis.axis)
-				{
-				case SDL_CONTROLLER_AXIS_LEFTX:
-					IN_VirtualKeyEvent(K_LEFTARROW, &left_stick[0], axis_value < -16896);
-					IN_VirtualKeyEvent(K_RIGHTARROW, &left_stick[1], axis_value > 16896);
-					break;
-
-				case SDL_CONTROLLER_AXIS_LEFTY:
-					IN_VirtualKeyEvent(K_UPARROW, &left_stick[2], axis_value < -16896);
-					IN_VirtualKeyEvent(K_DOWNARROW, &left_stick[3], axis_value > 16896);
-					break;
-				}
-			}
-			break;
-		}
-
-#ifndef NO_SDL_GYRO  // Gamepad sensors' reading is supported (gyro, accelerometer)
-		case SDL_CONTROLLERSENSORUPDATE:
-			if (event.csensor.sensor == SDL_SENSOR_GYRO) {
-				// Handle gyro calibration
-				if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown) {
-					gyro_accum[0] += event.csensor.data[0];
-					gyro_accum[1] += event.csensor.data[1];
-					gyro_accum[2] += event.csensor.data[2];
-					num_samples++;
-					break;
-				}
-			}
-			else if (event.csensor.sensor == SDL_SENSOR_ACCEL) {
-				// Update gravNorm from accelerometer data
-				Vector3 accelData = Vec3_New(
-					event.csensor.data[0],  // X-axis
-					event.csensor.data[1],  // Y-axis
-					event.csensor.data[2]   // Z-axis
-				);
-
-				// Normalize or set fallback value
-				gravNorm = Vec3_IsZero(accelData) ? Vec3_New(0.0f, 1.0f, 0.0f) : Vec3_Normalize(accelData);
-				printf("Updated gravNorm: (%f, %f, %f)\n", gravNorm.x, gravNorm.y, gravNorm.z);
-				break;
-			}
-#else  // Gyro read from a "secondary joystick" (usually with name ending in "IMU")
-		case SDL_JOYAXISMOTION:
-			if (!imu_joystick || event.cdevice.which != SDL_JoystickInstanceID(imu_joystick)) {
-				break;  // Controller axes handled by SDL_CONTROLLERAXISMOTION
-			}
-
-			int axis_value = event.caxis.value;
-
-			// Handle calibration for secondary joystick
-			if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown) {
-				switch (event.caxis.axis) {
-				case IMU_JOY_AXIS_GYRO_PITCH:
-					gyro_accum[0] += axis_value;
-					num_samples[0]++;
-					break;
-				case IMU_JOY_AXIS_GYRO_YAW:
-					gyro_accum[1] += axis_value;
-					num_samples[1]++;
-					break;
-				case IMU_JOY_AXIS_GYRO_ROLL:
-					gyro_accum[2] += axis_value;
-					num_samples[2]++;
-					break;
-				}
-				break;
-			}
-
-			// Process accelerometer data for gravNorm (if available)
-			if (event.caxis.axis == IMU_JOY_AXIS_GYRO_ROLL) {
-				Vector3 accelData = Vec3_New(
-					(float)(axis_value),  // X-axis roll
-					gravNorm.y,           // Y-axis (retain existing value if unavailable)
-					gravNorm.z            // Z-axis (retain existing value if unavailable)
-				);
-
-				// Normalize or set fallback value
-				gravNorm = Vec3_IsZero(accelData) ? Vec3_New(0.0f, 1.0f, 0.0f) : Vec3_Normalize(accelData);
-				printf("Updated gravNorm (secondary joystick): (%f, %f, %f)\n", gravNorm.x, gravNorm.y, gravNorm.z);
-			}
-#endif
-
-			if (gyro_active && !cl_paused->value && cls.key_dest == key_game) {
-#ifndef NO_SDL_GYRO
-				switch ((int)gyro_turning_axis->value) {
-				case 0:  // Yaw mode
-					gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;  // Yaw
-					gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Pitch
-					break;
-
-				case 1:  // Roll mode
-					gyro_yaw = -(event.csensor.data[2] - gyro_calibration_z->value);  // Roll
-					gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Pitch
-					break;
-
-				case 2:  // Player Space mode
-				{
-					Vector3 transformedGyro = TransformToPlayerSpace(
-						event.csensor.data[1] - gyro_calibration_y->value,  // Yaw
-						event.csensor.data[0] - gyro_calibration_x->value,  // Pitch
-						playerViewMatrix
-					);
-					gyro_yaw = transformedGyro.x;
-					gyro_pitch = transformedGyro.y;
-					printf("Player Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
-					break;
-				}
-
-				case 3:  // Local Space mode
-					gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;  // Raw Yaw
-					gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Raw Pitch
-					break;
-
-				case 4:  // World Space mode
-				{
-					// Calculate delta_seconds
-					static int last_frame_time = 0;
-					int current_time = Sys_Milliseconds();
-					float delta_seconds = (float)(current_time - last_frame_time) / 1000.0f;
-					last_frame_time = current_time;
-
-					// Ensure delta_seconds has a valid range
-					if (delta_seconds <= 0.0f || delta_seconds > 0.1f) {
-						delta_seconds = 0.016f;  // Default to ~60 FPS
-					}
-
-					// Create gyro input vector with calibrated values
-					Vector3 gyroInput = Vec3_New(
-						(event.csensor.data[1] - gyro_calibration_y->value) * 2.0f,  // Amplify Yaw
-						(event.csensor.data[0] - gyro_calibration_x->value) * 2.0f,  // Amplify Pitch
-						event.csensor.data[2] - gyro_calibration_z->value            // Roll remains unchanged
-					);
-
-					// Transform gyro input to World Space
-					Vector3 worldSpaceGyro = TransformToWorldSpace(
-						gyroInput, gravNorm, gyro_yawsensitivity->value * 1.5f,  // Adjust yaw sensitivity
-						delta_seconds
-					);
-
-					// Update yaw and pitch with transformed values
-					gyro_yaw = worldSpaceGyro.x;
-					gyro_pitch = worldSpaceGyro.y;
-
-					// Optional debugging logs (for testing purposes)
-					printf("Delta seconds: %f\n", delta_seconds);
-					printf("Gyro Input: X=%f, Y=%f, Z=%f\n", gyroInput.x, gyroInput.y, gyroInput.z);
-					printf("World Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
-
-					break;
-				}
-
-				default:
-					gyro_yaw = gyro_pitch = 0;  // Reset for unsupported or undefined modes
-					break;
-
-				}
-#else  // Old "joystick" gyro
-				switch (event.caxis.axis) {
-				case IMU_JOY_AXIS_GYRO_PITCH:
-					// Handle vertical rotation (Pitch)
-					gyro_pitch = -(axis_value - gyro_calibration_x->value);
-					break;
-
-				case IMU_JOY_AXIS_GYRO_YAW:
-					// Handle horizontal rotation (Yaw)
-					switch ((int)gyro_turning_axis->value) {
-					case 0:
-						// Standard Yaw calculation
-						gyro_yaw = axis_value - gyro_calibration_y->value;
+					case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
+						IN_VirtualKeyEvent(K_TRIG_LEFT, &left_trigger, axis_value > 8192);
 						break;
 
-					case 2:
-						// Transform to Player Space
+					case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
+						IN_VirtualKeyEvent(K_TRIG_RIGHT, &right_trigger, axis_value > 8192);
+						break;
+				}
+
+				if (!cl_paused->value && cls.key_dest == key_game)
+				{
+					switch (event.caxis.axis)
+					{
+						case SDL_CONTROLLER_AXIS_LEFTX:
+							joystick_left_x = axis_value;
+							break;
+						case SDL_CONTROLLER_AXIS_LEFTY:
+							joystick_left_y = axis_value;
+							break;
+						case SDL_CONTROLLER_AXIS_RIGHTX:
+							joystick_right_x = axis_value;
+							break;
+						case SDL_CONTROLLER_AXIS_RIGHTY:
+							joystick_right_y = axis_value;
+							break;
+					}
+					break;
+				}
+
+				// Virtual keys to navigate menus with left stick
+				if (cls.key_dest == key_menu)
+				{
+					switch (event.caxis.axis)
+					{
+						case SDL_CONTROLLER_AXIS_LEFTX:
+							IN_VirtualKeyEvent(K_LEFTARROW, &left_stick[0], axis_value < -16896);
+							IN_VirtualKeyEvent(K_RIGHTARROW, &left_stick[1], axis_value > 16896);
+							break;
+
+						case SDL_CONTROLLER_AXIS_LEFTY:
+							IN_VirtualKeyEvent(K_UPARROW, &left_stick[2], axis_value < -16896);
+							IN_VirtualKeyEvent(K_DOWNARROW, &left_stick[3], axis_value > 16896);
+							break;
+					}
+				}
+				break;
+			}
+
+#ifndef NO_SDL_GYRO  // Gamepad sensors' reading is supported (gyro, accelerometer)
+			case SDL_CONTROLLERSENSORUPDATE:
+				if (event.csensor.sensor == SDL_SENSOR_GYRO) {
+					// Handle gyro calibration
+					if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown) {
+						gyro_accum[0] += event.csensor.data[0];
+						gyro_accum[1] += event.csensor.data[1];
+						gyro_accum[2] += event.csensor.data[2];
+						num_samples++;
+						break;
+					}
+				}
+				else if (event.csensor.sensor == SDL_SENSOR_ACCEL) {
+					// Update gravNorm from accelerometer data
+					Vector3 accelData = Vec3_New(
+						event.csensor.data[0],  // X-axis
+						event.csensor.data[1],  // Y-axis
+						event.csensor.data[2]   // Z-axis
+					);
+
+					// Normalize or set fallback value
+					gravNorm = Vec3_IsZero(accelData) ? Vec3_New(0.0f, 1.0f, 0.0f) : Vec3_Normalize(accelData);
+					printf("Updated gravNorm: (%f, %f, %f)\n", gravNorm.x, gravNorm.y, gravNorm.z);
+					break;
+				}
+#else  // Gyro read from a "secondary joystick" (usually with name ending in "IMU")
+			case SDL_JOYAXISMOTION:
+				if (!imu_joystick || event.cdevice.which != SDL_JoystickInstanceID(imu_joystick)) {
+					break;  // Controller axes handled by SDL_CONTROLLERAXISMOTION
+				}
+
+				int axis_value = event.caxis.value;
+
+				// Handle calibration for secondary joystick
+				if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown) {
+					switch (event.caxis.axis) {
+					case IMU_JOY_AXIS_GYRO_PITCH:
+						gyro_accum[0] += axis_value;
+						num_samples[0]++;
+						break;
+					case IMU_JOY_AXIS_GYRO_YAW:
+						gyro_accum[1] += axis_value;
+						num_samples[1]++;
+						break;
+					case IMU_JOY_AXIS_GYRO_ROLL:
+						gyro_accum[2] += axis_value;
+						num_samples[2]++;
+						break;
+					}
+					break;
+				}
+
+				// Process accelerometer data for gravNorm (if available)
+				if (event.caxis.axis == IMU_JOY_AXIS_GYRO_ROLL) {
+					Vector3 accelData = Vec3_New(
+						(float)(axis_value),  // X-axis roll
+						gravNorm.y,           // Y-axis (retain existing value if unavailable)
+						gravNorm.z            // Z-axis (retain existing value if unavailable)
+					);
+
+					// Normalize or set fallback value
+					gravNorm = Vec3_IsZero(accelData) ? Vec3_New(0.0f, 1.0f, 0.0f) : Vec3_Normalize(accelData);
+					printf("Updated gravNorm (secondary joystick): (%f, %f, %f)\n", gravNorm.x, gravNorm.y, gravNorm.z);
+				}
+#endif
+
+				if (gyro_active && !cl_paused->value && cls.key_dest == key_game) {
+#ifndef NO_SDL_GYRO  // Gamepad sensors supported (gyro, accelerometer)
+					switch ((int)gyro_turning_axis->value) {
+					case 0:  // Yaw mode
+						gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;  // Yaw
+						gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Pitch
+						break;
+
+					case 1:  // Roll mode
+						gyro_yaw = -(event.csensor.data[2] - gyro_calibration_z->value);  // Roll
+						gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Pitch
+						break;
+
+					case 2:  // Player Space mode
 					{
 						Vector3 transformedGyro = TransformToPlayerSpace(
-							axis_value - gyro_calibration_y->value,  // Yaw
-							gyro_pitch,                              // Current Pitch
+							event.csensor.data[1] - gyro_calibration_y->value,  // Yaw
+							event.csensor.data[0] - gyro_calibration_x->value,  // Pitch
 							playerViewMatrix
 						);
 						gyro_yaw = transformedGyro.x;
 						gyro_pitch = transformedGyro.y;
-					}
-					break;
 
-					case 4:
-						// Transform to World Space
-					{
-						Vector3 gyroInput = Vec3_New(
-							axis_value - gyro_calibration_y->value,
-							gyro_pitch,  // Use current pitch
-							0.0f         // Roll is unused here
-						);
-						Vector3 worldSpaceGyro = TransformToWorldSpace(
-							gyroInput, gravNorm, gyro_yawsensitivity->value, delta_seconds
-						);
-						gyro_yaw = worldSpaceGyro.x;
-						gyro_pitch = worldSpaceGyro.y;
+						printf("Player Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
+						break;
 					}
-					break;
+
+					case 3:  // Local Space mode
+						gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;  // Raw Yaw
+						gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Raw Pitch
+						break;
+
+					case 4:  // World Space mode
+					{
+						// Use the CalculateDeltaSeconds function
+						float delta_seconds = CalculateDeltaSeconds();
+
+						// Clamp delta_seconds to a valid range
+						if (delta_seconds <= 0.0f || delta_seconds > 0.1f) {
+							delta_seconds = 0.016f;  // Default to ~60 FPS
+						}
+
+						// Create gyro input vector with calibrated values
+						Vector3 gyroInput = Vec3_New(
+							(event.csensor.data[0] - gyro_calibration_x->value) * 2.0f,  // Amplify Pitch
+							-(event.csensor.data[1] - gyro_calibration_y->value) * 2.0f, // Amplify and invert Yaw
+							event.csensor.data[2] - gyro_calibration_z->value            // Roll remains unchanged
+						);
+
+						// Transform gyro input to World Space
+						Vector3 worldSpaceGyro = TransformToWorldSpace(
+							gyroInput, gravNorm, gyro_yawsensitivity->value * 1.5f,  // Adjust yaw sensitivity
+							delta_seconds
+						);
+
+						// Update yaw and pitch with transformed values
+						gyro_yaw = worldSpaceGyro.x;  // Transformed Yaw
+						gyro_pitch = worldSpaceGyro.y;  // Transformed Pitch
+
+						// Debugging logs
+						printf("Delta seconds: %f\n", delta_seconds);
+						printf("Gyro Input: X=%f, Y=%f, Z=%f\n", gyroInput.x, gyroInput.y, gyroInput.z);
+						printf("World Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
+
+						break;
+					}
+
 
 					default:
-						// Fallback for unsupported turning_axis values
+						gyro_yaw = gyro_pitch = 0;  // Reset for unsupported modes
+						break;
+					}
+#else  // Old "joystick" gyro
+					switch (event.caxis.axis) {
+					case IMU_JOY_AXIS_GYRO_PITCH:
+						// Handle vertical rotation (Pitch)
+						gyro_pitch = -(axis_value - gyro_calibration_x->value);
+						break;
+
+					case IMU_JOY_AXIS_GYRO_YAW:
+						// Handle horizontal rotation (Yaw)
+						switch ((int)gyro_turning_axis->value) {
+						case 0:  // Standard Yaw calculation
+							gyro_yaw = axis_value - gyro_calibration_y->value;
+							break;
+
+						case 2:  // Transform to Player Space
+						{
+							Vector3 transformedGyro = TransformToPlayerSpace(
+								axis_value - gyro_calibration_y->value,  // Yaw
+								gyro_pitch,                              // Current Pitch
+								playerViewMatrix
+							);
+							gyro_yaw = transformedGyro.x;
+							gyro_pitch = transformedGyro.y;
+							break;
+						}
+
+						case 3:  // Local Space mode
+							// Use raw untransformed input for Local Space
+							gyro_yaw = axis_value - gyro_calibration_y->value;  // Raw Yaw
+							gyro_pitch = -(axis_value - gyro_calibration_x->value);  // Raw Pitch
+							break;
+
+						case 4:  // World Space mode
+						{
+							// Use the CalculateDeltaSeconds function
+							float delta_seconds = CalculateDeltaSeconds();
+
+							// Clamp delta_seconds to a valid range
+							if (delta_seconds <= 0.0f || delta_seconds > 0.1f) {
+								delta_seconds = 0.016f;  // Default to ~60 FPS
+							}
+
+							// Create gyro input vector with calibrated values
+							Vector3 gyroInput = Vec3_New(
+								(axis_value - gyro_calibration_x->value) * 2.0f,   // Amplify Pitch
+								-(gyro_pitch * 2.0f),                              // Amplify and invert Yaw
+								0.0f                                              // Roll remains unused
+							);
+
+							// Transform gyro input to World Space
+							Vector3 worldSpaceGyro = TransformToWorldSpace(
+								gyroInput, gravNorm, gyro_yawsensitivity->value * 1.5f,  // Adjust yaw sensitivity
+								delta_seconds
+							);
+
+							// Update yaw and pitch with transformed values
+							gyro_yaw = worldSpaceGyro.x;  // Transformed Yaw
+							gyro_pitch = worldSpaceGyro.y;  // Transformed Pitch
+
+							// Debugging logs
+							printf("Delta seconds: %f\n", delta_seconds);
+							printf("Gyro Input: X=%f, Y=%f\n", gyroInput.x, gyroInput.y);
+							printf("World Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
+
+							break;
+						}
+
+
+						default:
+							// Fallback for unsupported turning_axis values
+							gyro_yaw = gyro_pitch = 0;
+							break;
+						}
+						break;
+
+					case IMU_JOY_AXIS_GYRO_ROLL:
+						if ((int)gyro_turning_axis->value == 1) {
+							// Handle Roll
+							gyro_yaw = axis_value - gyro_calibration_z->value;
+						}
+						break;
+
+					default:
+						// Fallback to reset gyro values
 						gyro_yaw = gyro_pitch = 0;
 						break;
 					}
-					break;
-
-				case IMU_JOY_AXIS_GYRO_ROLL:
-					if ((int)gyro_turning_axis->value == 1) {
-						// Handle Roll
-						gyro_yaw = axis_value - gyro_calibration_z->value;
-					}
-					break;
-
-				default:
-					// Fallback to reset gyro values
-					gyro_yaw = gyro_pitch = 0;
-					break;
-				}
-
 #endif  // !NO_SDL_GYRO
-			}
-			else {
-				gyro_yaw = gyro_pitch = 0;
-			}
-			break;
 
-		case SDL_CONTROLLERDEVICEREMOVED:
-			if (controller && event.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))) {
-				Cvar_SetValue("paused", 1);
-				IN_Controller_Shutdown(true);
-				IN_Controller_Init(false);
-			}
-			break;
+				}
+				else {
+					gyro_yaw = gyro_pitch = 0;
+				}
+				break;
 
-		case SDL_JOYDEVICEADDED:
-			if (!controller) {
-				// This should be lower, but some controllers just don't want to get detected by the OS
-				updates_countdown = 100;
-				countdown_reason = REASON_CONTROLLERINIT;
-			}
-			break;
+			case SDL_CONTROLLERDEVICEREMOVED:
+				if (controller && event.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller))) {
+					Cvar_SetValue("paused", 1);
+					IN_Controller_Shutdown(true);
+					IN_Controller_Init(false);
+				}
+				break;
+
+			case SDL_JOYDEVICEADDED:
+				if (!controller) {
+					// This should be lower, but some controllers just don't want to get detected by the OS
+					updates_countdown = 100;
+					countdown_reason = REASON_CONTROLLERINIT;
+				}
+				break;
 
 #if SDL_VERSION_ATLEAST(2, 24, 0)	// support for battery status changes
-		case SDL_JOYBATTERYUPDATED:
-			if (!controller || event.jbattery.which != SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)))
-			{
+			case SDL_JOYBATTERYUPDATED:
+				if (!controller || event.jbattery.which != SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(controller)))
+				{
+					break;
+				}
+				if (event.jbattery.level == SDL_JOYSTICK_POWER_LOW)
+				{
+					Com_Printf("WARNING: Gamepad battery Low, it is recommended to connect it by cable.\n");
+				}
+				else if (event.jbattery.level == SDL_JOYSTICK_POWER_EMPTY)
+				{
+					SCR_CenterPrint("ALERT: Gamepad battery almost Empty.\n");
+				}
 				break;
-			}
-			if (event.jbattery.level == SDL_JOYSTICK_POWER_LOW)
-			{
-				Com_Printf("WARNING: Gamepad battery Low, it is recommended to connect it by cable.\n");
-			}
-			else if (event.jbattery.level == SDL_JOYSTICK_POWER_EMPTY)
-			{
-				SCR_CenterPrint("ALERT: Gamepad battery almost Empty.\n");
-			}
-			break;
 #endif	// SDL_VERSION_ATLEAST(2, 24, 0)
 
-		case SDL_QUIT:
-			Com_Quit();
-			break;
+			case SDL_QUIT:
+				Com_Quit();
+				break;
 		}
 	}
 
@@ -1306,45 +1348,45 @@ IN_Update(void)
 		{
 			switch (countdown_reason)
 			{
-			case REASON_CONTROLLERINIT:
-				if (!first_init)
-				{
-					IN_Controller_Shutdown(false);
-					IN_Controller_Init(true);
-				}
-				else
-				{
-					first_init = false;
-				}
-				break;
+				case REASON_CONTROLLERINIT:
+					if (!first_init)
+					{
+						IN_Controller_Shutdown(false);
+						IN_Controller_Init(true);
+					}
+					else
+					{
+						first_init = false;
+					}
+					break;
 
-			case REASON_GYROCALIBRATION:	// finish and save calibration
-			{
+				case REASON_GYROCALIBRATION:	// finish and save calibration
+					{
 #ifndef NO_SDL_GYRO
-				const float inverseSamples = 1.f / num_samples;
-				Cvar_SetValue("gyro_calibration_x", gyro_accum[0] * inverseSamples);
-				Cvar_SetValue("gyro_calibration_y", gyro_accum[1] * inverseSamples);
-				Cvar_SetValue("gyro_calibration_z", gyro_accum[2] * inverseSamples);
+						const float inverseSamples = 1.f / num_samples;
+						Cvar_SetValue("gyro_calibration_x", gyro_accum[0] * inverseSamples);
+						Cvar_SetValue("gyro_calibration_y", gyro_accum[1] * inverseSamples);
+						Cvar_SetValue("gyro_calibration_z", gyro_accum[2] * inverseSamples);
 #else
-				if (!num_samples[0] || !num_samples[1] || !num_samples[2])
-				{
-					Com_Printf("Calibration failed, please retry inside a level after having moved your controller a little.\n");
-				}
-				else
-				{
-					Cvar_SetValue("gyro_calibration_x", gyro_accum[0] / num_samples[0]);
-					Cvar_SetValue("gyro_calibration_y", gyro_accum[1] / num_samples[1]);
-					Cvar_SetValue("gyro_calibration_z", gyro_accum[2] / num_samples[2]);
-				}
+						if (!num_samples[0] || !num_samples[1] || !num_samples[2])
+						{
+							Com_Printf("Calibration failed, please retry inside a level after having moved your controller a little.\n");
+						}
+						else
+						{
+							Cvar_SetValue("gyro_calibration_x", gyro_accum[0] / num_samples[0]);
+							Cvar_SetValue("gyro_calibration_y", gyro_accum[1] / num_samples[1]);
+							Cvar_SetValue("gyro_calibration_z", gyro_accum[2] / num_samples[2]);
+						}
 #endif
-				Com_Printf("Calibration results:\n X=%f Y=%f Z=%f\n",
-					gyro_calibration_x->value, gyro_calibration_y->value, gyro_calibration_z->value);
-				CalibrationFinishedCallback();
-				break;
-			}
+						Com_Printf("Calibration results:\n X=%f Y=%f Z=%f\n",
+							gyro_calibration_x->value, gyro_calibration_y->value, gyro_calibration_z->value);
+						CalibrationFinishedCallback();
+						break;
+					}
 
-			default:
-				break;	// avoiding compiler warning
+				default:
+					break;	// avoiding compiler warning
 			}
 			countdown_reason = REASON_NONE;
 		}
@@ -1388,11 +1430,11 @@ IN_MapRange(float v, float deadzone, float sign)
 static thumbstick_t
 IN_RadialDeadzone(thumbstick_t stick, float deadzone)
 {
-	thumbstick_t result = { 0 };
+	thumbstick_t result = {0};
 	float magnitude = Q_min(IN_StickMagnitude(stick), 1.0f);
-	deadzone = Q_min(Q_max(deadzone, 0.0f), 0.9f);		// clamp to [0.0, 0.9]
+	deadzone = Q_min( Q_max(deadzone, 0.0f), 0.9f);		// clamp to [0.0, 0.9]
 
-	if (magnitude > deadzone)
+	if ( magnitude > deadzone )
 	{
 		const float scale = ((magnitude - deadzone) / (1.0 - deadzone)) / magnitude;
 		result.x = stick.x * scale;
@@ -1409,7 +1451,7 @@ IN_RadialDeadzone(thumbstick_t stick, float deadzone)
 static thumbstick_t
 IN_SlopedAxialDeadzone(thumbstick_t stick, float deadzone)
 {
-	thumbstick_t result = { 0 };
+	thumbstick_t result = {0};
 	float abs_x = fabsf(stick.x);
 	float abs_y = fabsf(stick.y);
 	float sign_x = copysignf(1.0f, stick.x);
@@ -1436,7 +1478,7 @@ IN_SlopedAxialDeadzone(thumbstick_t stick, float deadzone)
 static thumbstick_t
 IN_ApplyExpo(thumbstick_t stick, float exponent)
 {
-	thumbstick_t result = { 0 };
+	thumbstick_t result = {0};
 	float magnitude = IN_StickMagnitude(stick);
 	if (magnitude == 0)
 	{
@@ -1508,8 +1550,8 @@ IN_SmoothedStickRotation(float value)
 	// if input < bottom threshold, it'll all be put in the smoothing buffer
 	//				0 for immediate consumption
 	float immediate_weight = (fabsf(value) - bottom_threshold)
-		/ (top_threshold - bottom_threshold);
-	immediate_weight = Q_min(Q_max(immediate_weight, 0.0f), 1.0f); // clamp to [0, 1] range
+					/ (top_threshold - bottom_threshold);
+	immediate_weight = Q_min( Q_max(immediate_weight, 0.0f), 1.0f ); // clamp to [0, 1] range
 
 	// now we can push the smooth sample
 	float smooth_weight = 1.0f - immediate_weight;
@@ -1587,7 +1629,7 @@ IN_FlickStick(thumbstick_t stick, float axial_deadzone)
  * Move handling
  */
 void
-IN_Move(usercmd_t* cmd)
+IN_Move(usercmd_t *cmd)
 {
 	// Factor used to transform from SDL joystick input ([-32768, 32767])  to [-1, 1] range
 	static const float normalize_sdl_axis = 1.0f / 32768.0f;
@@ -1596,8 +1638,8 @@ IN_Move(usercmd_t* cmd)
 	static float old_mouse_y;
 	static float joystick_yaw, joystick_pitch;
 	static float joystick_forwardmove, joystick_sidemove;
-	static thumbstick_t left_stick = { 0 }, right_stick = { 0 };
-	thumbstick_t gyro_in = { 0 };
+	static thumbstick_t left_stick = {0}, right_stick = {0};
+	thumbstick_t gyro_in = {0};
 
 	if (m_filter->value)
 	{
@@ -1706,46 +1748,46 @@ IN_Move(usercmd_t* cmd)
 		}
 	}
 
-	switch ((int)joy_layout->value)
+	switch((int)joy_layout->value)
 	{
-	case LAYOUT_SOUTHPAW:
-		joystick_forwardmove = right_stick.y;
-		joystick_sidemove = right_stick.x;
-		joystick_yaw = left_stick.x;
-		joystick_pitch = left_stick.y;
-		break;
-	case LAYOUT_LEGACY:
-		joystick_forwardmove = left_stick.y;
-		joystick_sidemove = right_stick.x;
-		joystick_yaw = left_stick.x;
-		joystick_pitch = right_stick.y;
-		break;
-	case LAYOUT_LEGACY_SOUTHPAW:
-		joystick_forwardmove = right_stick.y;
-		joystick_sidemove = left_stick.x;
-		joystick_yaw = right_stick.x;
-		joystick_pitch = left_stick.y;
-		break;
-	case LAYOUT_FLICK_STICK:	// yaw already set by now
-		joystick_forwardmove = left_stick.y;
-		joystick_sidemove = left_stick.x;
-		break;
-	case LAYOUT_FLICK_STICK_SOUTHPAW:
-		joystick_forwardmove = right_stick.y;
-		joystick_sidemove = right_stick.x;
-		break;
-	default:	// LAYOUT_DEFAULT
-		joystick_forwardmove = left_stick.y;
-		joystick_sidemove = left_stick.x;
-		joystick_yaw = right_stick.x;
-		joystick_pitch = right_stick.y;
+		case LAYOUT_SOUTHPAW:
+			joystick_forwardmove = right_stick.y;
+			joystick_sidemove = right_stick.x;
+			joystick_yaw = left_stick.x;
+			joystick_pitch = left_stick.y;
+			break;
+		case LAYOUT_LEGACY:
+			joystick_forwardmove = left_stick.y;
+			joystick_sidemove = right_stick.x;
+			joystick_yaw = left_stick.x;
+			joystick_pitch = right_stick.y;
+			break;
+		case LAYOUT_LEGACY_SOUTHPAW:
+			joystick_forwardmove = right_stick.y;
+			joystick_sidemove = left_stick.x;
+			joystick_yaw = right_stick.x;
+			joystick_pitch = left_stick.y;
+			break;
+		case LAYOUT_FLICK_STICK:	// yaw already set by now
+			joystick_forwardmove = left_stick.y;
+			joystick_sidemove = left_stick.x;
+			break;
+		case LAYOUT_FLICK_STICK_SOUTHPAW:
+			joystick_forwardmove = right_stick.y;
+			joystick_sidemove = right_stick.x;
+			break;
+		default:	// LAYOUT_DEFAULT
+			joystick_forwardmove = left_stick.y;
+			joystick_sidemove = left_stick.x;
+			joystick_yaw = right_stick.x;
+			joystick_pitch = right_stick.y;
 	}
 
 	// To make the the viewangles changes independent of framerate we need to scale
 	// with frametime (assuming the configured values are for 60hz)
 	//
 	// For movement this is not needed, as those are absolute values independent of framerate
-	float joyViewFactor = cls.rframetime / 0.01666f;
+	float joyViewFactor = cls.rframetime/0.01666f;
 #ifndef NO_SDL_GYRO
 	float gyroViewFactor = (1.0f / M_PI) * joyViewFactor;
 #else
@@ -1755,27 +1797,27 @@ IN_Move(usercmd_t* cmd)
 	if (joystick_yaw)
 	{
 		cl.viewangles[YAW] -= (m_yaw->value * joy_yawsensitivity->value
-			* cl_yawspeed->value * joystick_yaw) * joyViewFactor;
+					* cl_yawspeed->value * joystick_yaw) * joyViewFactor;
 	}
 
-	if (joystick_pitch)
+	if(joystick_pitch)
 	{
 		cl.viewangles[PITCH] += (m_pitch->value * joy_pitchsensitivity->value
-			* cl_pitchspeed->value * joystick_pitch) * joyViewFactor;
+					* cl_pitchspeed->value * joystick_pitch) * joyViewFactor;
 	}
 
 	if (joystick_forwardmove)
 	{
 		// We need to be twice as fast because with joystick we run...
 		cmd->forwardmove -= m_forward->value * joy_forwardsensitivity->value
-			* cl_forwardspeed->value * 2.0f * joystick_forwardmove;
+					* cl_forwardspeed->value * 2.0f * joystick_forwardmove;
 	}
 
 	if (joystick_sidemove)
 	{
 		// We need to be twice as fast because with joystick we run...
 		cmd->sidemove += m_side->value * joy_sidesensitivity->value
-			* cl_sidespeed->value * 2.0f * joystick_sidemove;
+					* cl_sidespeed->value * 2.0f * joystick_sidemove;
 	}
 
 	if (gyro_yaw || gyro_pitch)
@@ -1786,13 +1828,13 @@ IN_Move(usercmd_t* cmd)
 	if (gyro_in.x)
 	{
 		cl.viewangles[YAW] += m_yaw->value * gyro_yawsensitivity->value
-			* cl_yawspeed->value * gyro_in.x * gyroViewFactor;
+					* cl_yawspeed->value * gyro_in.x * gyroViewFactor;
 	}
 
 	if (gyro_in.y)
 	{
 		cl.viewangles[PITCH] -= m_pitch->value * gyro_pitchsensitivity->value
-			* cl_pitchspeed->value * gyro_in.y * gyroViewFactor;
+					* cl_pitchspeed->value * gyro_in.y * gyroViewFactor;
 	}
 
 	// Flick Stick: flick in progress, changing the yaw angle to the target progressively
@@ -1856,11 +1898,11 @@ IN_GyroActionDown(void)
 {
 	switch ((int)gyro_mode->value)
 	{
-	case 1:
-		gyro_active = true;
-		return;
-	case 2:
-		gyro_active = false;
+		case 1:
+			gyro_active = true;
+			return;
+		case 2:
+			gyro_active = false;
 	}
 }
 
@@ -1869,11 +1911,11 @@ IN_GyroActionUp(void)
 {
 	switch ((int)gyro_mode->value)
 	{
-	case 1:
-		gyro_active = false;
-		return;
-	case 2:
-		gyro_active = true;
+		case 1:
+			gyro_active = false;
+			return;
+		case 2:
+			gyro_active = true;
 	}
 }
 
@@ -1897,8 +1939,8 @@ static void IN_Haptic_Shutdown(void);
  */
 static int
 IN_Haptic_Effect_Init(int effect_x, int effect_y, int effect_z,
-	int period, int magnitude,
-	int delay, int attack, int fade)
+				 int period, int magnitude,
+				 int delay, int attack, int fade)
 {
 	static SDL_HapticEffect haptic_effect;
 
@@ -1932,10 +1974,10 @@ IN_Haptic_Effect_Init(int effect_x, int effect_y, int effect_z,
 static void
 IN_Haptic_Effects_Info(void)
 {
-	Com_Printf("Joystick/Mouse haptic:\n");
-	Com_Printf(" * %d effects\n", SDL_HapticNumEffects(joystick_haptic));
-	Com_Printf(" * %d haptic effects at the same time\n", SDL_HapticNumEffectsPlaying(joystick_haptic));
-	Com_Printf(" * %d haptic axis\n", SDL_HapticNumAxes(joystick_haptic));
+	Com_Printf ("Joystick/Mouse haptic:\n");
+	Com_Printf (" * %d effects\n", SDL_HapticNumEffects(joystick_haptic));
+	Com_Printf (" * %d haptic effects at the same time\n", SDL_HapticNumEffectsPlaying(joystick_haptic));
+	Com_Printf (" * %d haptic axis\n", SDL_HapticNumAxes(joystick_haptic));
 }
 
 static void
@@ -1949,7 +1991,7 @@ IN_Haptic_Effects_Init(void)
 	}
 
 	memset(&last_haptic_effect, 0, sizeof(last_haptic_effect));
-	for (int i = 0; i < HAPTIC_EFFECT_LIST_SIZE; i++)
+	for (int i=0; i<HAPTIC_EFFECT_LIST_SIZE; i++)
 	{
 		last_haptic_effect[i].effect_id = -1;
 	}
@@ -1959,7 +2001,7 @@ IN_Haptic_Effects_Init(void)
  * Shuts the backend down
  */
 static void
-IN_Haptic_Effect_Shutdown(int* effect_id)
+IN_Haptic_Effect_Shutdown(int * effect_id)
 {
 	if (!effect_id)
 	{
@@ -1977,7 +2019,7 @@ IN_Haptic_Effect_Shutdown(int* effect_id)
 static void
 IN_Haptic_Effects_Shutdown(void)
 {
-	for (int i = 0; i < HAPTIC_EFFECT_LIST_SIZE; i++)
+	for (int i=0; i<HAPTIC_EFFECT_LIST_SIZE; i++)
 	{
 		last_haptic_effect[i].effect_volume = 0;
 		last_haptic_effect[i].effect_duration = 0;
@@ -1994,13 +2036,13 @@ IN_Haptic_Effects_Shutdown(void)
 
 static int
 IN_Haptic_GetEffectId(int effect_volume, int effect_duration,
-	int effect_delay, int effect_attack, int effect_fade,
-	int effect_x, int effect_y, int effect_z)
+				int effect_delay, int effect_attack, int effect_fade,
+				int effect_x, int effect_y, int effect_z)
 {
 	int i, haptic_volume;
 
 	// check effects for reuse
-	for (i = 0; i < last_haptic_effect_size; i++)
+	for (i=0; i < last_haptic_effect_size; i++)
 	{
 		if (
 			last_haptic_effect[i].effect_volume != effect_volume ||
@@ -2049,7 +2091,7 @@ IN_Haptic_GetEffectId(int effect_volume, int effect_duration,
 
 // Keep it same with rumble rules, look for descriptions to rumble
 // filtering in Controller_Rumble
-static char* default_haptic_filter = (
+static char *default_haptic_filter = (
 	// skipped files should be before wider rule
 	"!weapons/*grenlb "     // bouncing grenades don't have feedback
 	"!weapons/*hgrenb "     // bouncing grenades don't have feedback
@@ -2078,7 +2120,7 @@ static char* default_haptic_filter = (
 	"world/*rumble  "
 	"world/*quake  "
 	"world/*train2 "
-	);
+);
 
 /*
  * name: sound name
@@ -2086,9 +2128,9 @@ static char* default_haptic_filter = (
  * return false for empty filter
  */
 static qboolean
-Haptic_Feedback_Filtered_Line(const char* name, const char* filter)
+Haptic_Feedback_Filtered_Line(const char *name, const char *filter)
 {
-	const char* current_filter = filter;
+	const char *current_filter = filter;
 
 	// skip empty filter
 	if (!*current_filter)
@@ -2099,8 +2141,8 @@ Haptic_Feedback_Filtered_Line(const char* name, const char* filter)
 	while (*current_filter)
 	{
 		char part_filter[MAX_QPATH];
-		const char* name_part;
-		const char* str_end;
+		const char *name_part;
+		const char *str_end;
 
 		str_end = strchr(current_filter, '*');
 		if (!str_end)
@@ -2141,14 +2183,14 @@ Haptic_Feedback_Filtered_Line(const char* name, const char* filter)
  * filter: sound names separated by space, and '!' for skip file
  */
 static qboolean
-Haptic_Feedback_Filtered(const char* name, const char* filter)
+Haptic_Feedback_Filtered(const char *name, const char *filter)
 {
-	const char* current_filter = filter;
+	const char *current_filter = filter;
 
 	while (*current_filter)
 	{
 		char line_filter[MAX_QPATH];
-		const char* str_end;
+		const char *str_end;
 
 		str_end = strchr(current_filter, ' ');
 		// its end of filter
@@ -2199,9 +2241,9 @@ Haptic_Feedback_Filtered(const char* name, const char* filter)
  *    name - sound file name
  */
 void
-Haptic_Feedback(const char* name, int effect_volume, int effect_duration,
-	int effect_delay, int effect_attack, int effect_fade,
-	int effect_x, int effect_y, int effect_z, float effect_distance)
+Haptic_Feedback(const char *name, int effect_volume, int effect_duration,
+				int effect_delay, int effect_attack, int effect_fade,
+				int effect_x, int effect_y, int effect_z, float effect_distance)
 {
 	float max_distance = joy_haptic_distance->value;
 
@@ -2238,7 +2280,7 @@ Haptic_Feedback(const char* name, int effect_volume, int effect_duration,
 			/* have rumble used some slots in haptic effect list?,
 			 * ok, use little bit less haptic effects at the same time*/
 			IN_Haptic_Effects_Shutdown();
-			last_haptic_effect_size--;
+			last_haptic_effect_size --;
 			Com_Printf("%d haptic effects at the same time\n", last_haptic_effect_size);
 			return;
 		}
@@ -2256,8 +2298,8 @@ Haptic_Feedback(const char* name, int effect_volume, int effect_duration,
  *	from_player = if source is the client (player)
  */
 void
-Controller_Rumble(const char* name, vec3_t source, qboolean from_player,
-	unsigned int duration, unsigned short int volume)
+Controller_Rumble(const char *name, vec3_t source, qboolean from_player,
+		unsigned int duration, unsigned short int volume)
 {
 	vec_t intens = 0.0f, low_freq = 1.0f, hi_freq = 1.0f, dist_prop;
 	unsigned short int max_distance = 4;
@@ -2440,10 +2482,10 @@ IsCalibrationZero(void)
 static void
 IN_Controller_Init(qboolean notify_user)
 {
-	cvar_t* cvar;
+	cvar_t *cvar;
 	int nummappings;
-	char controllerdb[MAX_OSPATH] = { 0 };
-	SDL_Joystick* joystick = NULL;
+	char controllerdb[MAX_OSPATH] = {0};
+	SDL_Joystick *joystick = NULL;
 	SDL_bool is_controller = SDL_FALSE;
 
 	cvar = Cvar_Get("joy_escbutton", "0", CVAR_ARCHIVE);
@@ -2451,14 +2493,14 @@ IN_Controller_Init(qboolean notify_user)
 	{
 		switch ((int)cvar->value)
 		{
-		case 1:
-			joy_escbutton = SDL_CONTROLLER_BUTTON_BACK;
-			break;
-		case 2:
-			joy_escbutton = SDL_CONTROLLER_BUTTON_GUIDE;
-			break;
-		default:
-			joy_escbutton = SDL_CONTROLLER_BUTTON_START;
+			case 1:
+				joy_escbutton = SDL_CONTROLLER_BUTTON_BACK;
+				break;
+			case 2:
+				joy_escbutton = SDL_CONTROLLER_BUTTON_GUIDE;
+				break;
+			default:
+				joy_escbutton = SDL_CONTROLLER_BUTTON_START;
 		}
 	}
 
@@ -2477,23 +2519,23 @@ IN_Controller_Init(qboolean notify_user)
 	{
 
 #ifdef SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE	// extended input reports on PS controllers (enables gyro thru bluetooth)
-		SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1");
+		SDL_SetHint( SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1" );
 #endif
 #ifdef SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE
-		SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1");
+		SDL_SetHint( SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1" );
 #endif
 #ifdef SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS	// use button positions instead of labels, like SDL3
-		SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
+		SDL_SetHint( SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0" );
 #endif
 
 		if (SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC) == -1)
 		{
-			Com_Printf("Couldn't init SDL Game Controller: %s.\n", SDL_GetError());
+			Com_Printf ("Couldn't init SDL Game Controller: %s.\n", SDL_GetError());
 			return;
 		}
 	}
 
-	Com_Printf("%i joysticks were found.\n", SDL_NumJoysticks());
+	Com_Printf ("%i joysticks were found.\n", SDL_NumJoysticks());
 
 	if (!SDL_NumJoysticks())
 	{
@@ -2521,7 +2563,7 @@ IN_Controller_Init(qboolean notify_user)
 		snprintf(controllerdb, MAX_OSPATH, "%s/gamecontrollerdb.txt", rawPath);
 		nummappings = SDL_GameControllerAddMappingsFromFile(controllerdb);
 		if (nummappings > 0)
-			Com_Printf("%d mappings loaded from gamecontrollerdb.txt\n", nummappings);
+			Com_Printf ("%d mappings loaded from gamecontrollerdb.txt\n", nummappings);
 	}
 
 	for (int i = 0; i < SDL_NumJoysticks(); i++)
@@ -2532,26 +2574,26 @@ IN_Controller_Init(qboolean notify_user)
 		joystick = SDL_JoystickOpen(i);
 		if (!joystick)
 		{
-			Com_Printf("Couldn't open joystick %d: %s.\n", i + 1, SDL_GetError());
+			Com_Printf ("Couldn't open joystick %d: %s.\n", i+1, SDL_GetError());
 			continue;	// try next joystick
 		}
 
 		joystick_name = SDL_JoystickName(joystick);
 		name_len = strlen(joystick_name);
 
-		Com_Printf("Trying joystick %d, '%s'\n", i + 1, joystick_name);
+		Com_Printf ("Trying joystick %d, '%s'\n", i+1, joystick_name);
 
 		// Ugly hack to detect IMU-only devices - works for Switch controllers at least
-		if (name_len > 6 && strstr(joystick_name + name_len - 6, "IMU"))
+		if ( name_len > 6 && strstr(joystick_name + name_len - 6, "IMU") )
 		{
 #ifndef NO_SDL_GYRO
 			SDL_JoystickClose(joystick);
 			joystick = NULL;
-			Com_Printf("Skipping IMU device.\n");
+			Com_Printf ("Skipping IMU device.\n");
 
 #else	// if it's not a Left JoyCon, use it as Gyro
-			qboolean using_imu = !imu_joystick && !(strstr(joystick_name, "Joy-Con") && strstr(joystick_name, "L"));
-			Com_Printf("IMU device found... ");
+			qboolean using_imu = !imu_joystick && !( strstr(joystick_name, "Joy-Con") && strstr(joystick_name, "L") );
+			Com_Printf ("IMU device found... ");
 			SDL_JoystickClose(joystick);
 			joystick = NULL;
 
@@ -2561,36 +2603,36 @@ IN_Controller_Init(qboolean notify_user)
 				if (imu_joystick)
 				{
 					show_gyro = true;
-					Com_Printf("using it as Gyro sensor.\n");
+					Com_Printf ("using it as Gyro sensor.\n");
 				}
 				else
 				{
-					Com_Printf("\nCouldn't open IMU: %s.\n", SDL_GetError());
+					Com_Printf ("\nCouldn't open IMU: %s.\n", SDL_GetError());
 				}
 			}
 			else
 			{
-				Com_Printf("skipping.\n");
+				Com_Printf ("skipping.\n");
 			}
 #endif
 			continue;
 		}
 
-		Com_Printf("Buttons = %d, Axes = %d, Hats = %d\n", SDL_JoystickNumButtons(joystick),
+		Com_Printf ("Buttons = %d, Axes = %d, Hats = %d\n", SDL_JoystickNumButtons(joystick),
 			SDL_JoystickNumAxes(joystick), SDL_JoystickNumHats(joystick));
 		is_controller = SDL_IsGameController(i);
 
 		if (!is_controller)
 		{
-			char joystick_guid[65] = { 0 };
+			char joystick_guid[65] = {0};
 			SDL_JoystickGUID guid = SDL_JoystickGetDeviceGUID(i);
 
 			SDL_JoystickGetGUIDString(guid, joystick_guid, 64);
 
-			Com_Printf("To use joystick as game controller, provide its config by either:\n"
+			Com_Printf ("To use joystick as game controller, provide its config by either:\n"
 				" * Putting 'gamecontrollerdb.txt' file in your game directory.\n"
 				" * Or setting SDL_GAMECONTROLLERCONFIG environment variable. E.g.:\n");
-			Com_Printf("SDL_GAMECONTROLLERCONFIG='%s,%s,leftx:a0,lefty:a1,rightx:a2,righty:a3,back:b1,...'\n", joystick_guid, joystick_name);
+			Com_Printf ("SDL_GAMECONTROLLERCONFIG='%s,%s,leftx:a0,lefty:a1,rightx:a2,righty:a3,back:b1,...'\n", joystick_guid, joystick_name);
 		}
 
 		SDL_JoystickClose(joystick);
@@ -2610,15 +2652,15 @@ IN_Controller_Init(qboolean notify_user)
 
 #ifndef NO_SDL_GYRO
 
-			if (SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO)
-				&& !SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, SDL_TRUE))
+			if ( SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO)
+				&& !SDL_GameControllerSetSensorEnabled(controller, SDL_SENSOR_GYRO, SDL_TRUE) )
 			{
 				show_gyro = true;
 #if SDL_VERSION_ATLEAST(2, 0, 16)
-				Com_Printf("Gyro sensor enabled at %.2f Hz\n",
-					SDL_GameControllerGetSensorDataRate(controller, SDL_SENSOR_GYRO));
+				Com_Printf( "Gyro sensor enabled at %.2f Hz\n",
+					SDL_GameControllerGetSensorDataRate(controller, SDL_SENSOR_GYRO) );
 #else
-				Com_Printf("Gyro sensor enabled.\n");
+				Com_Printf( "Gyro sensor enabled.\n" );
 #endif	// #if SDL_VERSION_ATLEAST(2, 0, 16)
 			}
 			else
@@ -2626,7 +2668,7 @@ IN_Controller_Init(qboolean notify_user)
 				Com_Printf("Gyro sensor not found.\n");
 			}
 
-			if (SDL_GameControllerHasLED(controller))
+			if ( SDL_GameControllerHasLED(controller) )
 			{
 				SDL_GameControllerSetLED(controller, 0, 80, 0);	// green light
 			}
@@ -2819,9 +2861,9 @@ IN_Shutdown(void)
 /* ------------------------------------------------------------------ */
 
 void
-IN_GetClipboardText(char* out, size_t n)
+IN_GetClipboardText(char *out, size_t n)
 {
-	char* s = SDL_GetClipboardText();
+	char *s = SDL_GetClipboardText();
 
 	if (!s || *s == '\0')
 	{
@@ -2838,7 +2880,7 @@ IN_GetClipboardText(char* out, size_t n)
    Returns 0 on success, 1 otherwise.
 */
 int
-IN_SetClipboardText(const char* s)
+IN_SetClipboardText(const char *s)
 {
 	return SDL_SetClipboardText(s) != 0;
 }
