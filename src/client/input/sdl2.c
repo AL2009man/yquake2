@@ -70,7 +70,7 @@ static Vector3 MultiplyMatrixVector(Matrix4 matrix, Vector3 vector) {
 
 // ---- Vector3 Operations ----
 
-// Global gravity vector
+// Global gravity vector (should be updated dynamically based on game state)
 static Vector3 gravNorm = { 0.0f, 0.0f, 0.0f };
 
 static Vector3 Vec3_New(float x, float y, float z) {
@@ -108,7 +108,6 @@ static float CalculateDeltaSeconds(void) {
 	return delta;
 }
 
-
 // ---- Space Transformations ----
 
 static Vector3 TransformToPlayerSpace(float yaw, float pitch, Matrix4 playerViewMatrix) {
@@ -122,9 +121,8 @@ static Vector3 TransformToWorldSpace(Vector3 gyro, Vector3 gravNorm, float sensi
 		printf("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
 	}
 
-	printf("gravNorm before normalization: X=%f, Y=%f, Z=%f\n", gravNorm.x, gravNorm.y, gravNorm.z);
-	gravNorm = Vec3_Normalize(gravNorm);  // Ensure gravNorm is a unit vector
-	printf("gravNorm after normalization: X=%f, Y=%f, Z=%f\n", gravNorm.x, gravNorm.y, gravNorm.z);
+	// Ensure gravNorm is a unit vector
+	gravNorm = Vec3_Normalize(gravNorm);
 
 	// Calculate flatness and "upness" of gravNorm
 	float flatness = fabsf(gravNorm.y);
@@ -133,9 +131,9 @@ static Vector3 TransformToWorldSpace(Vector3 gyro, Vector3 gravNorm, float sensi
 
 	// Initialize result with Yaw computation
 	Vector3 result = {
-		-Vec3_Dot(gyro, gravNorm) * sensitivity * delta,  // Yaw
-		0.0f,                                            // Pitch placeholder
-		0.0f                                             // Roll unused
+		-Vec3_Dot(gyro, gravNorm) * delta,  // Yaw (delta only for frame-rate scaling)
+		0.0f,                              // Pitch placeholder
+		0.0f                               // Roll unused
 	};
 
 	// Calculate pitch vector and apply side reduction
@@ -144,10 +142,14 @@ static Vector3 TransformToWorldSpace(Vector3 gyro, Vector3 gravNorm, float sensi
 
 	if (!Vec3_IsZero(pitchVector)) {
 		pitchVector = Vec3_Normalize(pitchVector);
-		result.y = sideReduction * Vec3_Dot(gyro, pitchVector) * sensitivity * delta;
+		result.y = sideReduction * Vec3_Dot(gyro, pitchVector) * delta;  // Pitch (delta for frame-rate scaling)
 	}
 
-	// Debugging output for troubleshooting
+	// Apply sensitivity scaling AFTER delta adjustments
+	result.x *= sensitivity;  // Scale Yaw by sensitivity
+	result.y *= sensitivity;  // Scale Pitch by sensitivity
+
+	// Debugging output
 	printf("Gyro Input: X=%f, Y=%f, Z=%f\n", gyro.x, gyro.y, gyro.z);
 	printf("Pitch Vector: X=%f, Y=%f, Z=%f\n", pitchVector.x, pitchVector.y, pitchVector.z);
 	printf("Resultant World Space Vector: Yaw=%f, Pitch=%f\n", result.x, result.y);
@@ -1146,37 +1148,34 @@ IN_Update(void)
 
 					case 4:  // World Space mode
 					{
-						// Calculate delta_seconds
-						float delta_seconds = CalculateDeltaSeconds();
-
-						// Clamp delta_seconds to a valid range
-						if (delta_seconds <= 0.0f || delta_seconds > 0.1f) {
-							delta_seconds = 0.016f;  // Default to ~60 FPS
+						// Ensure gravity vector is valid and normalized
+						if (Vec3_IsZero(gravNorm)) {
+							gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default to "up"
 						}
 
-						// Use raw calibrated gyro data
+						// Create a calibrated input vector from the gyroscope
 						Vector3 gyroInput = Vec3_New(
 							event.csensor.data[0] - gyro_calibration_x->value,  // Pitch
 							-(event.csensor.data[1] - gyro_calibration_y->value),  // Inverted Yaw
 							event.csensor.data[2] - gyro_calibration_z->value   // Roll remains unchanged
 						);
 
-						// Transform to World Space using raw data
+						// Transform to World Space without affecting sensitivity
 						Vector3 worldSpaceGyro = TransformToWorldSpace(
-							gyroInput, gravNorm, 1.0f, delta_seconds
+							gyroInput, gravNorm, 1.0f, 1.0f  // Sensitivity scaling handled separately
 						);
 
-						// Directly update gyro_yaw and gyro_pitch without scaling
+						// Directly scale output with sensitivity values
 						gyro_yaw = worldSpaceGyro.x * gyro_yawsensitivity->value;
 						gyro_pitch = worldSpaceGyro.y * gyro_pitchsensitivity->value;
 
-						// Debugging logs for validation
-						printf("Delta seconds: %f\n", delta_seconds);
-						printf("Gyro Input: Pitch=%f, Yaw=%f\n", gyroInput.x, gyroInput.y);
+						// Debugging logs to validate behavior
+						printf("Gyro Input: X=%f, Y=%f, Z=%f\n", gyroInput.x, gyroInput.y, gyroInput.z);
 						printf("World Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
 
 						break;
 					}
+
 
 					default:
 						gyro_yaw = gyro_pitch = 0;  // Reset for unsupported modes
@@ -1216,38 +1215,33 @@ IN_Update(void)
 
 						case 4:  // World Space mode
 						{
-							// Calculate delta_seconds
-							float delta_seconds = CalculateDeltaSeconds();
-
-							// Clamp delta_seconds to a valid range
-							if (delta_seconds <= 0.0f || delta_seconds > 0.1f) {
-								delta_seconds = 0.016f;  // Default to ~60 FPS
+							// Ensure gravity vector is valid and normalized
+							if (Vec3_IsZero(gravNorm)) {
+								gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default to "up"
 							}
 
-							// Use raw calibrated gyro data
+							// Create a calibrated input vector from the gyro data
 							Vector3 gyroInput = Vec3_New(
 								axis_value - gyro_calibration_x->value,  // Pitch
 								-gyro_pitch,                             // Inverted Yaw
 								0.0f                                     // Roll remains unused
 							);
 
-							// Transform to World Space using raw data
+							// Transform to World Space without altering sensitivity scaling
 							Vector3 worldSpaceGyro = TransformToWorldSpace(
-								gyroInput, gravNorm, 1.0f, delta_seconds
+								gyroInput, gravNorm, 1.0f, 1.0f  // Sensitivity scaling handled after transformation
 							);
 
-							// Directly update gyro_yaw and gyro_pitch without scaling
+							// Apply natural sensitivity scaling
 							gyro_yaw = worldSpaceGyro.x * gyro_yawsensitivity->value;
 							gyro_pitch = worldSpaceGyro.y * gyro_pitchsensitivity->value;
 
-							// Debugging logs for validation
-							printf("Delta seconds: %f\n", delta_seconds);
-							printf("Gyro Input: Pitch=%f, Yaw=%f\n", gyroInput.x, gyroInput.y);
+							// Debugging logs to confirm calibration and transformation
+							printf("Gyro Input: X=%f, Y=%f\n", gyroInput.x, gyroInput.y);
 							printf("World Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
 
 							break;
 						}
-
 
 						default:
 							// Fallback for unsupported turning_axis values
