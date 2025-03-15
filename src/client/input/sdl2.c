@@ -42,6 +42,41 @@
 
 // ----
 
+// Define the Vector3 and typedef structure
+typedef struct {
+	float x, y, z;
+} Vector3;
+
+typedef struct {
+	float m[4][4]; // Replace with your actual matrix logic if needed
+} Matrix4;
+
+/*
+ * Multiply a 4x4 matrix with a 3D vector.
+ */
+static Vector3
+MultiplyMatrixVector(Matrix4 matrix, Vector3 vector)
+{
+	Vector3 result = { 0.0f, 0.0f, 0.0f };
+	result.x = matrix.m[0][0] * vector.x + matrix.m[1][0] * vector.y + matrix.m[2][0] * vector.z;
+	result.y = matrix.m[0][1] * vector.x + matrix.m[1][1] * vector.y + matrix.m[2][1] * vector.z;
+	result.z = matrix.m[0][2] * vector.x + matrix.m[1][2] * vector.y + matrix.m[2][2] * vector.z;
+	return result;
+}
+
+/*
+ * Transform gyro input to Player Space.
+ * Maps raw gyro input using the player's current in-game orientation.
+ */
+static Vector3
+TransformToPlayerSpace(float yaw, float pitch, Matrix4 playerViewMatrix)
+{
+	Vector3 rawGyro = { yaw, pitch, 0.0f };
+	return MultiplyMatrixVector(playerViewMatrix, rawGyro); // Apply transformation
+}
+
+// ----
+
 // Maximal mouse move per frame
 #define MOUSE_MAX 3000
 
@@ -168,8 +203,8 @@ static cvar_t *joy_haptic_magnitude;
 static cvar_t *joy_haptic_distance;
 
 // Gyro mode (0=off, 3=on, 1-2=uses button to enable/disable)
-cvar_t *gyro_mode;
-cvar_t *gyro_turning_axis;	// yaw or roll
+cvar_t* gyro_mode;
+cvar_t* gyro_turning_axis;	// yaw, roll, player space and local space
 
 // Gyro sensitivity
 static cvar_t *gyro_yawsensitivity;
@@ -650,9 +685,19 @@ IN_Update(void)
 
 	static qboolean left_trigger = false;
 	static qboolean right_trigger = false;
-	static qboolean left_stick[4] = {false, false, false, false};   // left, right, up, down virtual keys
+	static qboolean left_stick[4] = { false, false, false, false };   // left, right, up, down virtual keys
 
 	static int consoleKeyCode = 0;
+
+	// Placeholder identity matrix for Player Space calculations
+	Matrix4 playerViewMatrix = {
+		.m = {
+			{1.0f, 0.0f, 0.0f, 0.0f},
+			{0.0f, 1.0f, 0.0f, 0.0f},
+			{0.0f, 0.0f, 1.0f, 0.0f},
+			{0.0f, 0.0f, 0.0f, 1.0f}
+		}
+	};
 
 	/* Get and process an event */
 	while (SDL_PollEvent(&event))
@@ -911,84 +956,107 @@ IN_Update(void)
 				break;
 			}
 
-#ifndef NO_SDL_GYRO	// gamepad sensors' reading is supported (gyro, accelerometer)
+#ifndef NO_SDL_GYRO  // Gamepad sensors' reading is supported (gyro, accelerometer)
 			case SDL_CONTROLLERSENSORUPDATE:
-				if (event.csensor.sensor != SDL_SENSOR_GYRO)
-				{
+				if (event.csensor.sensor != SDL_SENSOR_GYRO) {
 					break;
 				}
-				if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown)
-				{
+				if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown) {
 					gyro_accum[0] += event.csensor.data[0];
 					gyro_accum[1] += event.csensor.data[1];
 					gyro_accum[2] += event.csensor.data[2];
 					num_samples++;
 					break;
 				}
-
-#else	// gyro read from a "secondary joystick" (usually with name ending in "IMU")
+#else  // Gyro read from a "secondary joystick" (usually with name ending in "IMU")
 			case SDL_JOYAXISMOTION:
-				if ( !imu_joystick || event.cdevice.which != SDL_JoystickInstanceID(imu_joystick) )
-				{
-					break;	// controller axes handled by SDL_CONTROLLERAXISMOTION
+				if (!imu_joystick || event.cdevice.which != SDL_JoystickInstanceID(imu_joystick)) {
+					break;  // Controller axes handled by SDL_CONTROLLERAXISMOTION
 				}
 
 				int axis_value = event.caxis.value;
-				if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown)
-				{
-					switch (event.caxis.axis)
-					{
-						case IMU_JOY_AXIS_GYRO_PITCH:
-							gyro_accum[0] += axis_value;
-							num_samples[0]++;
-							break;
-						case IMU_JOY_AXIS_GYRO_YAW:
-							gyro_accum[1] += axis_value;
-							num_samples[1]++;
-							break;
-						case IMU_JOY_AXIS_GYRO_ROLL:
-							gyro_accum[2] += axis_value;
-							num_samples[2]++;
+				if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown) {
+					switch (event.caxis.axis) {
+					case IMU_JOY_AXIS_GYRO_PITCH:
+						gyro_accum[0] += axis_value;
+						num_samples[0]++;
+						break;
+					case IMU_JOY_AXIS_GYRO_YAW:
+						gyro_accum[1] += axis_value;
+						num_samples[1]++;
+						break;
+					case IMU_JOY_AXIS_GYRO_ROLL:
+						gyro_accum[2] += axis_value;
+						num_samples[2]++;
+						break;
 					}
 					break;
 				}
+#endif  // !NO_SDL_GYRO
 
-#endif	// !NO_SDL_GYRO
-
-				if (gyro_active && !cl_paused->value && cls.key_dest == key_game)
-				{
+				if (gyro_active && !cl_paused->value && cls.key_dest == key_game) {
 #ifndef NO_SDL_GYRO
-					if (!gyro_turning_axis->value)
+					switch ((int)gyro_turning_axis->value) {
+					case 0:  // Yaw mode
+						gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;
+						break;
+
+					case 1:  // Roll mode
+						gyro_yaw = -(event.csensor.data[2] - gyro_calibration_z->value);
+						break;
+
+					case 2:  // Player Space mode
 					{
-						gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;		// yaw
+						Vector3 transformedGyro = TransformToPlayerSpace(
+							event.csensor.data[1] - gyro_calibration_y->value,  // yaw
+							event.csensor.data[0] - gyro_calibration_x->value,  // pitch
+							playerViewMatrix
+						);
+						gyro_yaw = transformedGyro.x;
+						gyro_pitch = transformedGyro.y;
+						break;
 					}
-					else
-					{
-						gyro_yaw = -(event.csensor.data[2] - gyro_calibration_z->value);	// roll
+
+					case 3:  // Local Space mode
+						gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;  // Raw yaw
+						gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Raw pitch
+						break;
+
+					default:
+						gyro_yaw = gyro_pitch = 0;
+						break;
 					}
-					gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;
-#else	// old "joystick" gyro
-					switch (event.caxis.axis)	// inside "case SDL_JOYAXISMOTION" here
-					{
-						case IMU_JOY_AXIS_GYRO_PITCH:
-							gyro_pitch = -(axis_value - gyro_calibration_x->value);
-							break;
-						case IMU_JOY_AXIS_GYRO_YAW:
-							if (!gyro_turning_axis->value)
-							{
-								gyro_yaw = axis_value - gyro_calibration_y->value;
-							}
-							break;
-						case IMU_JOY_AXIS_GYRO_ROLL:
-							if (gyro_turning_axis->value)
-							{
-								gyro_yaw = axis_value - gyro_calibration_z->value;
-							}
+#else  // Old "joystick" gyro
+					switch (event.caxis.axis) {
+					case IMU_JOY_AXIS_GYRO_PITCH:
+						gyro_pitch = -(axis_value - gyro_calibration_x->value);
+						break;
+
+					case IMU_JOY_AXIS_GYRO_YAW:
+						if (!gyro_turning_axis->value) {
+							gyro_yaw = axis_value - gyro_calibration_y->value;
+						}
+						else if ((int)gyro_turning_axis->value == 2) {
+							// Player Space mode
+							Vector3 transformedGyro = TransformToPlayerSpace(
+								axis_value - gyro_calibration_y->value,  // Yaw
+								gyro_pitch,  // Current pitch
+								playerViewMatrix
+							);
+							gyro_yaw = transformedGyro.x;
+							gyro_pitch = transformedGyro.y;
+						}
+						break;
+
+					case IMU_JOY_AXIS_GYRO_ROLL:
+						if ((int)gyro_turning_axis->value == 1) {
+							gyro_yaw = axis_value - gyro_calibration_z->value;  // Roll
+						}
+						break;
 					}
-#endif	// !NO_SDL_GYRO
+#endif  // !NO_SDL_GYRO
 				}
-				else
-				{
+				else {
 					gyro_yaw = gyro_pitch = 0;
 				}
 				break;
@@ -1002,8 +1070,7 @@ IN_Update(void)
 				break;
 
 			case SDL_JOYDEVICEADDED:
-				if (!controller)
-				{
+				if (!controller) {
 					// This should be lower, but some controllers just don't want to get detected by the OS
 					updates_countdown = 100;
 					countdown_reason = REASON_CONTROLLERINIT;
