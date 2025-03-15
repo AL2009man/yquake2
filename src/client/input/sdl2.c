@@ -42,24 +42,30 @@
 #include "header/input.h"
 #include "../header/keyboard.h"
 #include "../header/client.h"
+#include "math.h"
 
-// ----
+ // ----
 
-// Define the Vector3 and typedef structure
+ // Define the Vector3 and Matrix4 structures
 typedef struct {
 	float x, y, z;
 } Vector3;
 
 typedef struct {
-	float m[4][4]; // Replace with your actual matrix logic if needed
+	float m[4][4];  // Replace with your actual matrix logic if needed
 } Matrix4;
+
+/*
+ * Helper: Clamp a value between a minimum and maximum.
+ */
+static float clamp(float value, float min, float max) {
+	return fmaxf(fminf(value, max), min);
+}
 
 /*
  * Multiply a 4x4 matrix with a 3D vector.
  */
-static Vector3
-MultiplyMatrixVector(Matrix4 matrix, Vector3 vector)
-{
+static Vector3 MultiplyMatrixVector(Matrix4 matrix, Vector3 vector) {
 	Vector3 result = { 0.0f, 0.0f, 0.0f };
 	result.x = matrix.m[0][0] * vector.x + matrix.m[1][0] * vector.y + matrix.m[2][0] * vector.z;
 	result.y = matrix.m[0][1] * vector.x + matrix.m[1][1] * vector.y + matrix.m[2][1] * vector.z;
@@ -67,15 +73,106 @@ MultiplyMatrixVector(Matrix4 matrix, Vector3 vector)
 	return result;
 }
 
+// ----
+// Helper Functions for Vector3 Operations
+
+// Global declaration of gravNorm
+static Vector3 gravNorm = { 0.0f, 0.0f, 0.0f };
+
+// Create a new vector
+static Vector3 Vec3_New(float x, float y, float z) {
+	Vector3 v = { x, y, z };
+	return v;
+}
+
+// Subtract one vector from another
+static Vector3 Vec3_Subtract(Vector3 a, Vector3 b) {
+	return Vec3_New(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+// Scale a vector by a scalar
+static Vector3 Vec3_Scale(Vector3 v, float scalar) {
+	return Vec3_New(v.x * scalar, v.y * scalar, v.z * scalar);
+}
+
+// Calculate the dot product of two vectors
+static float Vec3_Dot(Vector3 a, Vector3 b) {
+	return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+// Normalize a vector (make its length 1)
+static Vector3 Vec3_Normalize(Vector3 v) {
+	float length = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+	if (length == 0.0f) {
+		return Vec3_New(0.0f, 0.0f, 0.0f);  // Avoid division by zero
+	}
+	return Vec3_Scale(v, 1.0f / length);
+}
+
+// Check if a vector is a zero vector
+static int Vec3_IsZero(Vector3 v) {
+	return (v.x == 0.0f && v.y == 0.0f && v.z == 0.0f);
+}
+
+// ----
+
+/*
+ * Calculate delta_seconds (time delta per frame).
+ * Ensure this calculation is done at the start of every frame.
+ */
+static float CalculateDeltaSeconds(void) {
+	static int last_frame_time = 0;
+	int current_time = Sys_Milliseconds();  // Fetch the current system time
+	float delta_seconds = (float)(current_time - last_frame_time) / 1000.0f;  // Convert to seconds
+	last_frame_time = current_time;
+	return delta_seconds;
+}
+
 /*
  * Transform gyro input to Player Space.
  * Maps raw gyro input using the player's current in-game orientation.
  */
-static Vector3
-TransformToPlayerSpace(float yaw, float pitch, Matrix4 playerViewMatrix)
-{
+static Vector3 TransformToPlayerSpace(float yaw, float pitch, Matrix4 playerViewMatrix) {
 	Vector3 rawGyro = { yaw, pitch, 0.0f };
-	return MultiplyMatrixVector(playerViewMatrix, rawGyro); // Apply transformation
+	return MultiplyMatrixVector(playerViewMatrix, rawGyro);  // Apply transformation
+}
+
+/*
+ * Transform gyro input to World Space.
+ * Stabilizes gyro input using gravity as a reference.
+ */
+static Vector3 TransformToWorldSpace(Vector3 gyro, Vector3 gravNorm, float gyro_yawsensitivity, float delta_seconds) {
+	// Ensure gravNorm is normalized (fallback for edge cases)
+	if (Vec3_IsZero(gravNorm)) {
+		gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default to "up" if gravity is zero
+	}
+
+	// Calculate flatness and upness for smoothing transitions
+	float flatness = fabsf(gravNorm.y);  // High when the controller is flat
+	float upness = fabsf(gravNorm.z);    // High when the controller is upright
+	float sideReduction = (fmaxf(flatness, upness) - 0.125f) / 0.125f;
+	sideReduction = clamp(sideReduction, 0.0f, 1.0f);  // Clamp to [0, 1]
+
+	Vector3 result = { 0.0f, 0.0f, 0.0f };
+
+	// Calculate World Space yaw using gravity as a reference
+	result.x = -Vec3_Dot(gyro, gravNorm) * gyro_yawsensitivity * delta_seconds;
+
+	// Project pitch axis onto the gravity plane
+	float gravDotPitchAxis = gravNorm.x;  // Shortcut for dot product with X-axis
+	Vector3 pitchVector = Vec3_Subtract(
+		Vec3_New(1.0f, 0.0f, 0.0f),       // Vector along the X-axis
+		Vec3_Scale(gravNorm, gravDotPitchAxis)
+	);
+
+	if (!Vec3_IsZero(pitchVector)) {
+		pitchVector = Vec3_Normalize(pitchVector);
+
+		// Adjust pitch velocity with side reduction
+		result.y = sideReduction * Vec3_Dot(gyro, pitchVector) * gyro_yawsensitivity * delta_seconds;
+	}
+
+	return result;
 }
 
 // ----
@@ -682,25 +779,31 @@ qboolean IN_NumpadIsOn()
 void
 IN_Update(void)
 {
-	qboolean want_grab;
-	SDL_Event event;
-	unsigned int key;
+    // Initialize delta_seconds for time calculations
+    static int last_frame_time = 0;
+    int current_time = Sys_Milliseconds();
+    float delta_seconds = (float)(current_time - last_frame_time) / 1000.0f;  // Convert to seconds
+    last_frame_time = current_time;
 
-	static qboolean left_trigger = false;
-	static qboolean right_trigger = false;
-	static qboolean left_stick[4] = { false, false, false, false };   // left, right, up, down virtual keys
+    qboolean want_grab;
+    SDL_Event event;
+    unsigned int key;
 
-	static int consoleKeyCode = 0;
+    static qboolean left_trigger = false;
+    static qboolean right_trigger = false;
+    static qboolean left_stick[4] = { false, false, false, false };   // left, right, up, down virtual keys
 
-	// Placeholder identity matrix for Player Space calculations
-	Matrix4 playerViewMatrix = {
-		.m = {
-			{1.0f, 0.0f, 0.0f, 0.0f},
-			{0.0f, 1.0f, 0.0f, 0.0f},
-			{0.0f, 0.0f, 1.0f, 0.0f},
-			{0.0f, 0.0f, 0.0f, 1.0f}
-		}
-	};
+    static int consoleKeyCode = 0;
+
+    // Placeholder identity matrix for Player Space calculations
+    Matrix4 playerViewMatrix = {
+        .m = {
+            {1.0f, 0.0f, 0.0f, 0.0f},
+            {0.0f, 1.0f, 0.0f, 0.0f},
+            {0.0f, 0.0f, 1.0f, 0.0f},
+            {0.0f, 0.0f, 0.0f, 1.0f}
+        }
+    };
 
 	/* Get and process an event */
 	while (SDL_PollEvent(&event))
@@ -961,14 +1064,27 @@ IN_Update(void)
 
 #ifndef NO_SDL_GYRO  // Gamepad sensors' reading is supported (gyro, accelerometer)
 			case SDL_CONTROLLERSENSORUPDATE:
-				if (event.csensor.sensor != SDL_SENSOR_GYRO) {
-					break;
+				if (event.csensor.sensor == SDL_SENSOR_GYRO) {
+					// Handle gyro calibration
+					if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown) {
+						gyro_accum[0] += event.csensor.data[0];
+						gyro_accum[1] += event.csensor.data[1];
+						gyro_accum[2] += event.csensor.data[2];
+						num_samples++;
+						break;
+					}
 				}
-				if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown) {
-					gyro_accum[0] += event.csensor.data[0];
-					gyro_accum[1] += event.csensor.data[1];
-					gyro_accum[2] += event.csensor.data[2];
-					num_samples++;
+				else if (event.csensor.sensor == SDL_SENSOR_ACCEL) {
+					// Update gravNorm from accelerometer data
+					Vector3 accelData = Vec3_New(
+						event.csensor.data[0],  // X-axis
+						event.csensor.data[1],  // Y-axis
+						event.csensor.data[2]   // Z-axis
+					);
+
+					// Normalize or set fallback value
+					gravNorm = Vec3_IsZero(accelData) ? Vec3_New(0.0f, 1.0f, 0.0f) : Vec3_Normalize(accelData);
+					printf("Updated gravNorm: (%f, %f, %f)\n", gravNorm.x, gravNorm.y, gravNorm.z);
 					break;
 				}
 #else  // Gyro read from a "secondary joystick" (usually with name ending in "IMU")
@@ -978,6 +1094,8 @@ IN_Update(void)
 				}
 
 				int axis_value = event.caxis.value;
+
+				// Handle calibration for secondary joystick
 				if (countdown_reason == REASON_GYROCALIBRATION && updates_countdown) {
 					switch (event.caxis.axis) {
 					case IMU_JOY_AXIS_GYRO_PITCH:
@@ -995,7 +1113,20 @@ IN_Update(void)
 					}
 					break;
 				}
-#endif  // !NO_SDL_GYRO
+
+				// Process accelerometer data for gravNorm (if available)
+				if (event.caxis.axis == IMU_JOY_AXIS_GYRO_ROLL) {
+					Vector3 accelData = Vec3_New(
+						(float)(axis_value),  // X-axis roll
+						gravNorm.y,           // Y-axis (retain existing value if unavailable)
+						gravNorm.z            // Z-axis (retain existing value if unavailable)
+					);
+
+					// Normalize or set fallback value
+					gravNorm = Vec3_IsZero(accelData) ? Vec3_New(0.0f, 1.0f, 0.0f) : Vec3_Normalize(accelData);
+					printf("Updated gravNorm (secondary joystick): (%f, %f, %f)\n", gravNorm.x, gravNorm.y, gravNorm.z);
+				}
+#endif
 
 				if (gyro_active && !cl_paused->value && cls.key_dest == key_game) {
 #ifndef NO_SDL_GYRO
@@ -1019,6 +1150,7 @@ IN_Update(void)
 						);
 						gyro_yaw = transformedGyro.x;
 						gyro_pitch = transformedGyro.y;
+						printf("Player Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
 						break;
 					}
 
@@ -1027,11 +1159,40 @@ IN_Update(void)
 						gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Raw Pitch
 						break;
 
+					case 4:  // World Space mode
+					{
+						// Initialize delta_seconds for this frame
+						static int last_frame_time = 0;
+						int current_time = Sys_Milliseconds();
+						float delta_seconds = (float)(current_time - last_frame_time) / 1000.0f;
+						last_frame_time = current_time;
+						printf("Delta seconds: %f\n", delta_seconds);
+
+						// Create gyro input vector
+						Vector3 gyroInput = Vec3_New(
+							event.csensor.data[1] - gyro_calibration_y->value,  // Yaw
+							event.csensor.data[0] - gyro_calibration_x->value,  // Pitch
+							event.csensor.data[2] - gyro_calibration_z->value   // Roll
+						);
+						printf("Gyro Input: X=%f, Y=%f, Z=%f\n", gyroInput.x, gyroInput.y, gyroInput.z);
+
+						// Use TransformToWorldSpace with updated gravNorm and delta_seconds
+						Vector3 worldSpaceGyro = TransformToWorldSpace(
+							gyroInput, gravNorm, gyro_yawsensitivity->value, delta_seconds
+						);
+
+						// Update yaw and pitch with transformed values
+						gyro_yaw = worldSpaceGyro.x;
+						gyro_pitch = worldSpaceGyro.y;
+						printf("World Space Gyro: Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
+						break;
+					}
+
 					default:
 						gyro_yaw = gyro_pitch = 0;  // Reset for unsupported or undefined modes
 						break;
 					}
-#else  // Old "joystick" gyro
+#else  // Old joystick gyro
 					switch (event.caxis.axis) {
 					case IMU_JOY_AXIS_GYRO_PITCH:
 						gyro_pitch = -(axis_value - gyro_calibration_x->value);  // Vertical rotation (Pitch)
@@ -1044,11 +1205,23 @@ IN_Update(void)
 						else if ((int)gyro_turning_axis->value == 2) {
 							Vector3 transformedGyro = TransformToPlayerSpace(
 								axis_value - gyro_calibration_y->value,  // Yaw
-								gyro_pitch,  // Current Pitch
+								gyro_pitch,                              // Current Pitch
 								playerViewMatrix
 							);
 							gyro_yaw = transformedGyro.x;
 							gyro_pitch = transformedGyro.y;
+						}
+						else if ((int)gyro_turning_axis->value == 4) {
+							Vector3 gyroInput = Vec3_New(
+								axis_value - gyro_calibration_y->value,
+								gyro_pitch,  // Use current pitch
+								0.0f         // Roll is unused here
+							);
+							Vector3 worldSpaceGyro = TransformToWorldSpace(
+								gyroInput, gravNorm, gyro_yawsensitivity->value, delta_seconds
+							);
+							gyro_yaw = worldSpaceGyro.x;
+							gyro_pitch = worldSpaceGyro.y;
 						}
 						break;
 
