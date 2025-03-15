@@ -26,7 +26,10 @@
  *
  * Flick Stick handling is based on:
  * http://gyrowiki.jibbsmart.com/blog:good-gyro-controls-part-2:the-flick-stick
- *
+ * 
+ * Player Space and Local Space is based on:
+ * http://gyrowiki.jibbsmart.com/blog:player-space-gyro-and-alternatives-explained
+ * 
  * =======================================================================
  *
  * This is the Quake II input system backend, implemented with SDL.
@@ -998,18 +1001,20 @@ IN_Update(void)
 #ifndef NO_SDL_GYRO
 					switch ((int)gyro_turning_axis->value) {
 					case 0:  // Yaw mode
-						gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;
+						gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;  // Yaw
+						gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Pitch
 						break;
 
 					case 1:  // Roll mode
-						gyro_yaw = -(event.csensor.data[2] - gyro_calibration_z->value);
+						gyro_yaw = -(event.csensor.data[2] - gyro_calibration_z->value);  // Roll
+						gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Pitch
 						break;
 
 					case 2:  // Player Space mode
 					{
 						Vector3 transformedGyro = TransformToPlayerSpace(
-							event.csensor.data[1] - gyro_calibration_y->value,  // yaw
-							event.csensor.data[0] - gyro_calibration_x->value,  // pitch
+							event.csensor.data[1] - gyro_calibration_y->value,  // Yaw
+							event.csensor.data[0] - gyro_calibration_x->value,  // Pitch
 							playerViewMatrix
 						);
 						gyro_yaw = transformedGyro.x;
@@ -1018,29 +1023,28 @@ IN_Update(void)
 					}
 
 					case 3:  // Local Space mode
-						gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;  // Raw yaw
-						gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Raw pitch
+						gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;  // Raw Yaw
+						gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Raw Pitch
 						break;
 
 					default:
-						gyro_yaw = gyro_pitch = 0;
+						gyro_yaw = gyro_pitch = 0;  // Reset for unsupported or undefined modes
 						break;
 					}
 #else  // Old "joystick" gyro
 					switch (event.caxis.axis) {
 					case IMU_JOY_AXIS_GYRO_PITCH:
-						gyro_pitch = -(axis_value - gyro_calibration_x->value);
+						gyro_pitch = -(axis_value - gyro_calibration_x->value);  // Vertical rotation (Pitch)
 						break;
 
 					case IMU_JOY_AXIS_GYRO_YAW:
-						if (!gyro_turning_axis->value) {
-							gyro_yaw = axis_value - gyro_calibration_y->value;
+						if ((int)gyro_turning_axis->value == 0) {
+							gyro_yaw = axis_value - gyro_calibration_y->value;  // Yaw
 						}
 						else if ((int)gyro_turning_axis->value == 2) {
-							// Player Space mode
 							Vector3 transformedGyro = TransformToPlayerSpace(
 								axis_value - gyro_calibration_y->value,  // Yaw
-								gyro_pitch,  // Current pitch
+								gyro_pitch,  // Current Pitch
 								playerViewMatrix
 							);
 							gyro_yaw = transformedGyro.x;
@@ -1052,6 +1056,10 @@ IN_Update(void)
 						if ((int)gyro_turning_axis->value == 1) {
 							gyro_yaw = axis_value - gyro_calibration_z->value;  // Roll
 						}
+						break;
+
+					default:
+						gyro_yaw = gyro_pitch = 0;
 						break;
 					}
 #endif  // !NO_SDL_GYRO
