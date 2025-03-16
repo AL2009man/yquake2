@@ -1369,7 +1369,7 @@ case SDL_CONTROLLERDEVICEREMOVED:
 
 case SDL_JOYDEVICEADDED:
     if (!controller) {
-        // Delay updates to improve controller detection
+		// This should be lower, but some controllers just don't want to get detected by the OS
         updates_countdown = 100;
         countdown_reason = REASON_CONTROLLERINIT;
     }
