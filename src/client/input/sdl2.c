@@ -110,6 +110,14 @@ static inline float CalculateDeltaSeconds(void) {
 
 // ---- Space Transformations ----
 
+static Vector3 TransformToLocalSpace(float yaw, float pitch, float roll, Matrix4 localTransformMatrix) {
+	// Combine yaw, pitch, and roll into a single vector
+	Vector3 gyro = { yaw, pitch, roll };
+
+	// Transform the vector using the local transformation matrix
+	return MultiplyMatrixVector(localTransformMatrix, gyro);
+}
+
 static Vector3 TransformToPlayerSpace(float yaw, float pitch, Matrix4 playerViewMatrix) {
 	return MultiplyMatrixVector(playerViewMatrix, (Vector3) { yaw, pitch, 0.0f });
 }
@@ -197,7 +205,7 @@ typedef enum
 static float mouse_x, mouse_y;
 static unsigned char joy_escbutton = SDL_CONTROLLER_BUTTON_START;
 static int joystick_left_x, joystick_left_y, joystick_right_x, joystick_right_y;
-static float gyro_yaw, gyro_pitch;
+static float gyro_yaw, gyro_roll, gyro_pitch;
 static qboolean mlooking;
 
 // The last time input events were processed.
@@ -1128,9 +1136,37 @@ IN_Update(void)
 					break;
 
 				case 2:  // Local Space mode
-					gyro_yaw = event.csensor.data[1] - gyro_calibration_y->value;  // Raw Yaw
-					gyro_pitch = event.csensor.data[0] - gyro_calibration_x->value;  // Raw Pitch
+				{
+					// ---- Extract Raw Calibrated Inputs ----
+					float yaw_input = event.csensor.data[1] - gyro_calibration_y->value;      // Raw Yaw
+					float roll_input = (event.csensor.data[2] - gyro_calibration_z->value);   // Raw Roll (now inverted at source)
+					float pitch_input = event.csensor.data[0] - gyro_calibration_x->value;   // Raw Pitch
+
+					// ---- Combine Yaw and Roll into a Vector ----
+					Vector3 rawGyro = { yaw_input - roll_input, pitch_input, 0.0f };
+
+					// ---- Apply Local Space Transformation ----
+					Matrix4 localTransformMatrix = {
+						.m = {
+							{1.0f, 0.0f, 0.0f, 0.0f},
+							{0.0f, 1.0f, 0.0f, 0.0f},
+							{0.0f, 0.0f, 1.0f, 0.0f},
+							{0.0f, 0.0f, 0.0f, 1.0f}
+						}
+					};
+					Vector3 transformedGyro = TransformToLocalSpace(rawGyro.x, rawGyro.y, rawGyro.z, localTransformMatrix);
+
+					// ---- Map Transformed Values ----
+					gyro_yaw = transformedGyro.x;    // Transformed Yaw
+					gyro_pitch = transformedGyro.y;  // Transformed Pitch
+					gyro_roll = -transformedGyro.z;  // Roll is inverted (Lean fix)
+
+					// ---- Debugging Logs ----
+					printf("Local Space Gyro (Gamepad, Fixed Roll): Yaw=%f, Roll=%f (Inverted), Combined=%f, Pitch=%f\n",
+						yaw_input, roll_input, gyro_yaw, gyro_pitch);
+
 					break;
+				}
 
 				case 3:  // Player Space mode
 				{
@@ -1195,10 +1231,37 @@ IN_Update(void)
 						break;
 
 					case 2:  // Local Space mode
-						// Use raw untransformed input for Local Space
-						gyro_yaw = axis_value - gyro_calibration_y->value;  // Raw Yaw
-						gyro_pitch = -(axis_value - gyro_calibration_x->value);  // Raw Pitch
+					{
+						// ---- Extract Raw Calibrated Inputs ----
+						float yaw_input = axis_value - gyro_calibration_y->value;        // Raw Yaw
+						float roll_input = (axis_value - gyro_calibration_z->value);     // Raw Roll (now inverted at source)
+						float pitch_input = -(axis_value - gyro_calibration_x->value);   // Raw Pitch (inverted)
+
+						// ---- Combine Yaw and Roll into a Vector ----
+						Vector3 rawGyro = { yaw_input - roll_input, pitch_input, 0.0f };
+
+						// ---- Apply Local Space Transformation ----
+						Matrix4 localTransformMatrix = {
+							.m = {
+								{1.0f, 0.0f, 0.0f, 0.0f},
+								{0.0f, 1.0f, 0.0f, 0.0f},
+								{0.0f, 0.0f, 1.0f, 0.0f},
+								{0.0f, 0.0f, 0.0f, 1.0f}
+							}
+						};
+						Vector3 transformedGyro = TransformToLocalSpace(rawGyro.x, rawGyro.y, rawGyro.z, localTransformMatrix);
+
+						// ---- Map Transformed Values ----
+						gyro_yaw = transformedGyro.x;    // Transformed Yaw
+						gyro_pitch = transformedGyro.y;  // Transformed Pitch
+						gyro_roll = -transformedGyro.z;  // Roll is inverted (Lean fix)
+
+						// ---- Debugging Logs ----
+						printf("Local Space Gyro (Joystick, Fixed Roll): Yaw=%f, Roll=%f (Inverted), Combined=%f, Pitch=%f\n",
+							yaw_input, roll_input, gyro_yaw, gyro_pitch);
+
 						break;
+					}
 
 					case 3:  // Transform to Player Space
 					{
