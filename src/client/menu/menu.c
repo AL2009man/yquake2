@@ -1928,9 +1928,9 @@ Gyro_MenuInit(void)
 	{
 		"yaw (turn)",
 		"roll (lean)",
-		"player space",
 		"local space",
-        "world space",
+		"player space",
+		"world space",
 		0
 	};
 
