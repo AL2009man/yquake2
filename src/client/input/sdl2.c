@@ -128,7 +128,6 @@ static inline float CalculateDeltaSeconds(void) {
 
 // ---- Gyro Space Transformations ----
 
-static Vector3 TransformToLocalSpace(float yaw, float pitch, float roll, Matrix4 localTransformMatrix, float sensitivityYaw, float sensitivityPitch) {
 static Vector3 TransformToLocalSpace(float yaw, float pitch, float roll, Matrix4 localTransformMatrix) {
 	Vector3 gyro = Vec3_New(yaw, pitch, roll);
 	return MultiplyMatrixVector(localTransformMatrix, gyro);
