@@ -49,7 +49,7 @@
 
 #define EPSILON 1e-6
 
- // ---- Vector and Matrix Operations ----
+ // ---- Type Definitions ----
 
 typedef struct {
 	float x, y, z;
@@ -59,19 +59,14 @@ typedef struct {
 	float m[4][4];  // Placeholder for matrix logic
 } Matrix4;
 
-// Clamp a value between min and max
+// ---- Utility Functions ----
+
+// Clamps a value between a specified minimum and maximum
 static inline float clamp(float value, float min, float max) {
 	return fmaxf(fminf(value, max), min);
 }
 
-// Multiplies a vector by a matrix (row-major)
-static inline Vector3 MultiplyMatrixVector(Matrix4 matrix, Vector3 vector) {
-	return (Vector3) {
-		matrix.m[0][0] * vector.x + matrix.m[1][0] * vector.y + matrix.m[2][0] * vector.z,
-			matrix.m[0][1] * vector.x + matrix.m[1][1] * vector.y + matrix.m[2][1] * vector.z,
-			matrix.m[0][2] * vector.x + matrix.m[1][2] * vector.y + matrix.m[2][2] * vector.z
-	};
-}
+// ---- Vector Operations ----
 
 // Creates a new vector
 static inline Vector3 Vec3_New(float x, float y, float z) {
@@ -122,10 +117,22 @@ static inline bool Vec3_IsZero(Vector3 v) {
 	return (fabsf(v.x) < EPSILON && fabsf(v.y) < EPSILON && fabsf(v.z) < EPSILON);
 }
 
-// ---- Global Gravity Vector ----
+// ---- Matrix Operations ----
 
-static Vector3 gravNorm = { 0.0f, 1.0f, 0.0f };
+// Multiplies a vector by a matrix (row-major)
+static inline Vector3 MultiplyMatrixVector(Matrix4 matrix, Vector3 vector) {
+	return (Vector3) {
+		matrix.m[0][0] * vector.x + matrix.m[1][0] * vector.y + matrix.m[2][0] * vector.z,
+			matrix.m[0][1] * vector.x + matrix.m[1][1] * vector.y + matrix.m[2][1] * vector.z,
+			matrix.m[0][2] * vector.x + matrix.m[1][2] * vector.y + matrix.m[2][2] * vector.z
+	};
+}
 
+// ---- Global Gravity Vector Management ----
+
+static Vector3 gravNorm = { 0.0f, 1.0f, 0.0f };  // Default gravity vector
+
+// Sets a new gravity vector
 static inline void SetGravityVector(float x, float y, float z) {
 	Vector3 newGravNorm = Vec3_New(x, y, z);
 	if (Vec3_IsZero(newGravNorm)) {
@@ -135,55 +142,68 @@ static inline void SetGravityVector(float x, float y, float z) {
 	gravNorm = Vec3_Normalize(newGravNorm);
 }
 
+// Resets gravity vector to default
 static inline void ResetGravityVector(void) {
 	gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);
 }
 
+
 // ---- Delta Time Calculation ----
+
+// Calculates the time elapsed (in seconds) since the last call
 static inline float CalculateDeltaSeconds(void) {
-	static int last_time = 0;
-	float delta = (cls.realtime - last_time) / 1000.0f;
-	last_time = cls.realtime;
+	static int last_time = 0;  // Stores the timestamp of the previous frame
+	float delta = (cls.realtime - last_time) / 1000.0f;  // Convert milliseconds to seconds
+	last_time = cls.realtime;  // Update the last time to the current time
+
+	// Ensure delta is non-negative
 	return delta > 0.0f ? delta : 0.0f;
 }
 
 // ---- Gyro Space Transformations ----
 
+// Transforms gyro inputs to Local Space using a transformation matrix
 static Vector3 TransformToLocalSpace(float yaw, float pitch, float roll, Matrix4 localTransformMatrix) {
 	Vector3 gyro = Vec3_New(yaw, pitch, roll);
 	return MultiplyMatrixVector(localTransformMatrix, gyro);
 }
 
-
+// Transforms gyro inputs to Player Space, taking into account gravity and player view orientation
 static Vector3 TransformToPlayerSpace(float yaw, float pitch, Vector3 gravNorm, Matrix4 playerViewMatrix) {
+	// Ensure gravity vector is valid
 	if (Vec3_IsZero(gravNorm)) {
-		gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);
+		gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default gravity vector
 		printf("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
 	}
 	gravNorm = Vec3_Normalize(gravNorm);
 
+	// Combine yaw and pitch based on gravity orientation
 	float combinedYaw = yaw * gravNorm.y + pitch * gravNorm.z;
 	Vector3 localGyro = Vec3_New(combinedYaw, pitch, 0.0f);
+
+	// Apply player view transformation
 	return MultiplyMatrixVector(playerViewMatrix, localGyro);
 }
 
+// Transforms gyro inputs to World Space, taking into account gravity influence
 static Vector3 TransformToWorldSpace(Vector3 gyro, Vector3 gravNorm) {
+	// Ensure gravity vector is valid
 	if (Vec3_IsZero(gravNorm)) {
-		gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default gravity vector pointing up
+		gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default gravity vector
 		printf("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
 	}
 	gravNorm = Vec3_Normalize(gravNorm);
 
-	// Step 1: Calculate flatness and upness for pitch adjustment
-	float flatness = fabsf(gravNorm.y);  // 1 when controller is flat
-	float upness = fabsf(gravNorm.z);    // 1 when controller is upright
+	// Step 1: Calculate flatness and upness for side reduction
+	float flatness = fabsf(gravNorm.y);  // Flat when gravity aligns with the Y-axis
+	float upness = fabsf(gravNorm.z);    // Upright when gravity aligns with the Z-axis
 	float sideReduction = clamp((fmaxf(flatness, upness) - 0.125f) / 0.125f, 0.0f, 1.0f);
 
 	// Step 2: Initialize the result vector
 	Vector3 result = Vec3_New(0.0f, 0.0f, 0.0f);
 
 	// Step 3: Compute yaw (result.x)
-	result.x = -Vec3_Dot(gyro, gravNorm); // Use negative to flip left/right behavior
+	result.x = -Vec3_Dot(gyro, gravNorm);  // Yaw velocity, flipped for alignment
 
 	// Step 4: Compute pitch (result.y)
 	float gravDotPitchAxis = gravNorm.x;  // Shortcut for Vec3_Dot(gravNorm, Vec3_New(1.0f, 0.0f, 0.0f))
@@ -195,7 +215,6 @@ static Vector3 TransformToWorldSpace(Vector3 gyro, Vector3 gravNorm) {
 
 	return result;
 }
-
 
 
 // ---- Constants ----
