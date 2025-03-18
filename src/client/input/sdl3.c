@@ -152,13 +152,18 @@ static inline void ResetGravityVector(void) {
 // Transforms gyro inputs to Local Space using a transformation matrix
 static Vector3 TransformToLocalSpace(float yaw, float pitch, float roll, Matrix4 localTransformMatrix) {
 	// Step 1: Create a gyro vector from yaw, pitch, and roll inputs
-	Vector3 gyro = Vec3_New(yaw, pitch, roll);
+    Vector3 gyro = Vec3_New(yaw, pitch, roll);
 
-	// Step 2: Apply the local transformation matrix to convert to Local Space
-	Vector3 localGyro = MultiplyMatrixVector(localTransformMatrix, gyro);
+	// Step 2: Adjust roll to complement yaw
+	// This compensates for any coupling or interference between yaw and roll inputs
+    float adjustedRoll = roll - (yaw * 0.1f);  // Example: scale factor of 0.1 to balance yaw-roll interaction
+    Vector3 adjustedGyro = Vec3_New(gyro.x, gyro.y, adjustedRoll);
 
-	// Step 3: Return the transformed vector
-	return localGyro;
+	// Step 3: Apply the local transformation matrix to convert to Local Space
+    Vector3 localGyro = MultiplyMatrixVector(localTransformMatrix, adjustedGyro);
+
+	// Step 4: Return the transformed vector
+    return localGyro;
 }
 
 // Transforms gyro inputs to Player Space, taking into account gravity and player view orientation
