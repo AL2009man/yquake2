@@ -663,7 +663,7 @@ it's `+set busywait 0` (setting the `busywait` cvar) and `-portable`
   use external controllers. 
   - `4`: *world space*, similar to Local Space but taking account on
   the gravity influence. Preferred for those who are more familiar 
-  with Nintendo games's gyro aim function.
+  with Nintendo games'gyro aim function.
 
 * **gyro_tightening**: Threshold of rotation in degrees per second,
   where gyro inputs below it will be dampened. Meant to counter a
