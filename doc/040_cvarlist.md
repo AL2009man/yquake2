@@ -652,8 +652,7 @@ it's `+set busywait 0` (setting the `busywait` cvar) and `-portable`
 * **gyro_turning_axis**: Sets which gyro axis will be used for turning.
 
   - `0`: *yaw (turn)*, for people who prefer to hold their
-  controller flat, like using a pointing device. This is enabled
-  by default.
+  controller flat, like using a pointing device. Default is `0`.
   - `1`: *roll (lean)*, for people who hold the controller upright.
   - `2`: *local space*, which combines yaw and roll together. Preferred
   for people to use a device with a controller attached to the screen.
