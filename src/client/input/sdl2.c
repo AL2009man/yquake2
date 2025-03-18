@@ -161,9 +161,30 @@ static Vector3 TransformToLocalSpace(float yaw, float pitch, float roll, Matrix4
 	return localGyro;
 }
 
-
 // Transforms gyro inputs to Player Space, taking into account gravity and player view orientation
-static Vector3 TransformToPlayerSpace(float yaw, float pitch, float roll, Vector3 gravNorm, Matrix4 playerViewMatrix, float sensitivity) {
+static Vector3 TransformToPlayerSpace(float yaw, float pitch, float roll, Vector3 gravNorm, Matrix4 playerViewMatrix) {
+	// Step 1: Validate and normalize gravity vector
+	if (Vec3_IsZero(gravNorm)) {
+		gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default gravity vector
+		printf("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
+	}
+	gravNorm = Vec3_Normalize(gravNorm);
+
+	// Step 2: Calculate world yaw using gravity's influence
+	float worldYaw = yaw * gravNorm.y + pitch * gravNorm.z;
+
+	// Step 3: Incorporate roll
+	float adjustedRoll = roll * gravNorm.x;
+
+	// Step 4: Combine yaw, pitch, and roll into a local gyro vector (no sensitivity adjustments here)
+	Vector3 localGyro = Vec3_New(worldYaw, pitch, adjustedRoll);
+
+	// Step 5: Transform local gyro vector to Player Space using the player view matrix
+	return MultiplyMatrixVector(playerViewMatrix, localGyro);
+}
+
+// Transforms gyro inputs to World Space, taking into account gravity influence
+static Vector3 TransformToWorldSpace(Vector3 gyro, Vector3 gravNorm) {
 	// Ensure gravity vector is valid
 	if (Vec3_IsZero(gravNorm)) {
 		gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default gravity vector
@@ -171,22 +192,26 @@ static Vector3 TransformToPlayerSpace(float yaw, float pitch, float roll, Vector
 	}
 	gravNorm = Vec3_Normalize(gravNorm);
 
-	// Step 1: Calculate world yaw using gravity's influence
-	float worldYaw = yaw * gravNorm.y + pitch * gravNorm.z;
+	// Step 1: Calculate flatness and upness for side reduction
+	float flatness = fabsf(gravNorm.y);  // Flat when gravity aligns with the Y-axis
+	float upness = fabsf(gravNorm.z);    // Upright when gravity aligns with the Z-axis
+	float sideReduction = clamp((fmaxf(flatness, upness) - 0.125f) / 0.125f, 0.0f, 1.0f);
 
-	// Step 2: Incorporate roll
-	float adjustedRoll = roll * gravNorm.x;
+	// Step 2: Initialize the result vector
+	Vector3 result = Vec3_New(0.0f, 0.0f, 0.0f);
 
-	// Step 3: Apply sensitivity
-	worldYaw *= sensitivity;
-	pitch *= sensitivity;
-	adjustedRoll *= sensitivity;
+	// Step 3: Compute yaw (result.x)
+	result.x = -Vec3_Dot(gyro, gravNorm);  // Yaw velocity, flipped for alignment
 
-	// Step 4: Combine yaw, pitch, and roll into a local gyro vector
-	Vector3 localGyro = Vec3_New(worldYaw, pitch, adjustedRoll);
+	// Step 4: Compute pitch (result.y)
+	float gravDotPitchAxis = gravNorm.x;  // Shortcut for Vec3_Dot(gravNorm, Vec3_New(1.0f, 0.0f, 0.0f))
+	Vector3 pitchVector = Vec3_Subtract(Vec3_New(1.0f, 0.0f, 0.0f), Vec3_Scale(gravNorm, gravDotPitchAxis));
+	if (!Vec3_IsZero(pitchVector)) {
+		pitchVector = Vec3_Normalize(pitchVector);
+		result.y = sideReduction * Vec3_Dot(gyro, pitchVector);
+	}
 
-	// Step 5: Apply player view transformation
-	return MultiplyMatrixVector(playerViewMatrix, localGyro);
+	return result;
 }
 
 // ----
@@ -793,12 +818,6 @@ qboolean IN_NumpadIsOn()
 void
 IN_Update(void)
 {
-	// Initialize delta_seconds for time calculations
-	static int last_frame_time = 0;
-	int current_time = Sys_Milliseconds();
-	float delta_seconds = (float)(current_time - last_frame_time) / 1000.0f;  // Convert to seconds
-	last_frame_time = current_time;
-
 	qboolean want_grab;
 	SDL_Event event;
 	unsigned int key;
@@ -808,16 +827,6 @@ IN_Update(void)
 	static qboolean left_stick[4] = { false, false, false, false };   // left, right, up, down virtual keys
 
 	static int consoleKeyCode = 0;
-
-	// Placeholder identity matrix for Player Space calculations
-	Matrix4 playerViewMatrix = {
-		.m = {
-			{1.0f, 0.0f, 0.0f, 0.0f},
-			{0.0f, 1.0f, 0.0f, 0.0f},
-			{0.0f, 0.0f, 1.0f, 0.0f},
-			{0.0f, 0.0f, 0.0f, 1.0f}
-		}
-	};
 
 	/* Get and process an event */
 	while (SDL_PollEvent(&event))
@@ -1165,7 +1174,7 @@ IN_Update(void)
 					// ---- Combine Yaw and Roll into a Vector ----
 					Vector3 rawGyro = { yaw_input - roll_input, pitch_input, 0.0f };
 
-					// ---- Apply Local Space Transformation ----
+					// ---- Apply Local View Matrix ----
 					Matrix4 localTransformMatrix = {
 						.m = {
 							{1.0f, 0.0f, 0.0f, 0.0f},
@@ -1188,30 +1197,80 @@ IN_Update(void)
 					break;
 				}
 
-				case 3:  // Player Space mode
+				case 3:  // Player Space Mode
 				{
-					// ---- Extract Calibrated Inputs ----
-					float yaw_input = event.csensor.data[1] - gyro_calibration_y->value;   // Raw Yaw
-					float pitch_input = event.csensor.data[0] - gyro_calibration_x->value; // Raw Pitch
-					float roll_input = event.csensor.data[2] - gyro_calibration_z->value;  // Raw Roll
-					float sensitivity = gyro_yawsensitivity->value;                          // Sensitivity factor
+
+					// ---- Extract Raw Calibrated Inputs ----
+					float yaw_input = event.csensor.data[1] - gyro_calibration_y->value;      // Raw Yaw
+					float roll_input = event.csensor.data[2] - gyro_calibration_z->value;    // Raw Roll
+					float pitch_input = event.csensor.data[0] - gyro_calibration_x->value;   // Raw Pitch
+
+					// ---- Combine Inputs into a Vector ----
+					Vector3 rawGyro = Vec3_New(yaw_input, pitch_input, roll_input);  // Combine yaw, pitch, and roll
+
+					// ---- Apply Player View Matrix ----
+					Matrix4 playerViewMatrix = {
+						.m = {
+							{1.0f, 0.0f, 0.0f, 0.0f},
+							{0.0f, 1.0f, 0.0f, 0.0f},
+							{0.0f, 0.0f, 1.0f, 0.0f},
+							{0.0f, 0.0f, 0.0f, 1.0f}
+						}
+					};
 
 					// ---- Apply Player Space Transformation ----
 					Vector3 transformedGyro = TransformToPlayerSpace(
-						yaw_input,          // Yaw input
-						pitch_input,        // Pitch input
-						roll_input,         // Roll input
-						gravNorm,           // Gravity vector
-						playerViewMatrix,   // Player's view matrix
-						sensitivity         // Sensitivity factor
+						rawGyro.x,              // Yaw input
+						rawGyro.y,              // Pitch input
+						rawGyro.z,              // Roll input
+						gravNorm,               // Normalized Gravity vector
+						playerViewMatrix        // Player's view matrix
 					);
 
 					// ---- Map Transformed Values ----
 					gyro_yaw = transformedGyro.x;    // Transformed Yaw
 					gyro_pitch = transformedGyro.y;  // Transformed Pitch
+					gyro_roll = transformedGyro.z;   // Transformed Roll
 
 					// ---- Debugging Logs ----
-					printf("Player Space Gyro (Gamepad): Yaw=%f, Pitch=%f\n", gyro_yaw, gyro_pitch);
+					printf("Player Space Gyro (Gamepad): Yaw=%f, Pitch=%f, Roll=%f\n",
+						gyro_yaw, gyro_pitch, gyro_roll);
+
+					break;
+				}
+
+				case 4:  // World Space Mode
+				{
+					// ---- Extract Raw Calibrated Inputs ----
+					float yaw_input = -(event.csensor.data[1] - gyro_calibration_y->value); // Flipped Yaw (Left/Right)
+					float pitch_input = event.csensor.data[0] - gyro_calibration_x->value;  // Correct Pitch (Up/Down)
+					float roll_input = event.csensor.data[2] - gyro_calibration_z->value;   // Raw Roll (Tilt)
+
+					// ---- Combine Raw Inputs into a Vector ----
+					Vector3 rawGyro = Vec3_New(pitch_input, yaw_input, roll_input); // Swapped Axes for Alignment
+
+					// ---- Normalize Gravity Vector ----
+					Vector3 normalizedGrav = gravNorm;
+					if (Vec3_IsZero(normalizedGrav)) {
+						normalizedGrav = Vec3_New(0.0f, 1.0f, 0.0f);  // Default gravity vector
+						printf("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
+					}
+					normalizedGrav = Vec3_Normalize(normalizedGrav);
+
+					// Debugging
+					printf("Normalized Gravity: X=%f, Y=%f, Z=%f\n", normalizedGrav.x, normalizedGrav.y, normalizedGrav.z);
+
+					// ---- Apply World Space Transformation ----
+					Vector3 transformedGyro = TransformToWorldSpace(rawGyro, normalizedGrav);
+
+					// ---- Map Transformed Values ----
+					gyro_yaw = transformedGyro.x;    // Proper Yaw (Left/Right)
+					gyro_pitch = transformedGyro.y;  // Proper Pitch (Up/Down)
+					gyro_roll = transformedGyro.z;   // Proper Roll (Tilt)
+
+					// ---- Debugging Logs ----
+					printf("World Space Gyro (Gamepad): Yaw=%f, Pitch=%f, Roll=%f\n",
+						gyro_yaw, gyro_pitch, gyro_roll);
 
 					break;
 				}
@@ -1244,7 +1303,7 @@ IN_Update(void)
 						// ---- Combine Yaw and Roll into a Vector ----
 						Vector3 rawGyro = { yaw_input - roll_input, pitch_input, 0.0f };
 
-						// ---- Apply Local Space Transformation ----
+						// ---- Declare Local View Matrix ----
 						Matrix4 localTransformMatrix = {
 							.m = {
 								{1.0f, 0.0f, 0.0f, 0.0f},
@@ -1267,34 +1326,86 @@ IN_Update(void)
 						break;
 					}
 
-					case 3:  // Transform to Player Space
+					case 3:  // Player Space Mode
 					{
-						// ---- Extract Calibrated Yaw Input ----
-						float yaw_input = axis_value - gyro_calibration_y->value;  // Raw Yaw (Joystick)
 
-						// ---- Use Existing Pitch Value ----
-						float pitch_input = gyro_pitch;  // Current Pitch
+						// ---- Extract Raw Calibrated Inputs ----
+						float yaw_input = axis_value - gyro_calibration_y->value;        // Raw Yaw
+						float roll_input = axis_value - gyro_calibration_z->value;       // Raw Roll
+						float pitch_input = -(axis_value - gyro_calibration_x->value);   // Raw Pitch (inverted)
 
-						// ---- Extract Calibrated Roll Input ----
-						float roll_input = gyro_roll;  // Add roll if available (use a placeholder if undefined)
+						// ---- Combine Inputs into a Vector ----
+						Vector3 rawGyro = Vec3_New(yaw_input, pitch_input, roll_input);  // Combine yaw, pitch, and roll
+
+						// ---- Declare Player View Matrix ----
+						Matrix4 playerViewMatrix = {
+							.m = {
+								{1.0f, 0.0f, 0.0f, 0.0f},
+								{0.0f, 1.0f, 0.0f, 0.0f},
+								{0.0f, 0.0f, 1.0f, 0.0f},
+								{0.0f, 0.0f, 0.0f, 1.0f}
+							}
+						};
 
 						// ---- Apply Player Space Transformation ----
 						Vector3 transformedGyro = TransformToPlayerSpace(
-							yaw_input,              // Yaw input
-							pitch_input,            // Pitch input
-							roll_input,             // Roll input (now explicitly provided)
-							gravNorm,               // Normalized gravity vector
-							playerViewMatrix,       // Player's view matrix
 							gyro_sensitivity->value // Sensitivity factor
+							rawGyro.x,              // Yaw input
+							rawGyro.y,              // Pitch input
+							rawGyro.z,              // Roll input
+							gravNorm,               // Normalized Gravity vector
+							playerViewMatrix        // Player's view matrix
 						);
 
 						// ---- Map Transformed Values ----
 						gyro_yaw = transformedGyro.x;    // Transformed Yaw
 						gyro_pitch = transformedGyro.y;  // Transformed Pitch
-						gyro_roll = transformedGyro.z;   // Transformed Roll, if needed
+						gyro_roll = transformedGyro.z;   // Transformed Roll
 
 						// ---- Debugging Logs ----
-						printf("Player Space Gyro (Joystick): Yaw=%f, Pitch=%f, Roll=%f\n", gyro_yaw, gyro_pitch, gyro_roll);
+						printf("Player Space Gyro (Joystick): Yaw=%f, Pitch=%f, Roll=%f\n",
+							gyro_yaw, gyro_pitch, gyro_roll);
+
+						break;
+					}
+
+
+					case 4:  // World Space Mode (Old Joystick Gyro)
+					{
+						// ---- Extract Raw Calibrated Inputs ----
+						float yaw_input = -(axis_value - gyro_calibration_y->value);  // Flipped Yaw (Left/Right)
+						float pitch_input = axis_value - gyro_calibration_x->value;   // Correct Pitch (Up/Down)
+						float roll_input = axis_value - gyro_calibration_z->value;    // Raw Roll (Tilt)
+
+						// ---- Combine Raw Inputs into a Vector ----
+						Vector3 rawGyro = Vec3_New(pitch_input, yaw_input, roll_input);
+						// Maintained the swapped axes to ensure proper alignment.
+
+						// ---- Normalize Gravity Vector ----
+						Vector3 normalizedGrav = gravNorm;
+						if (Vec3_IsZero(normalizedGrav)) {
+							normalizedGrav = Vec3_New(0.0f, 1.0f, 0.0f);  // Default gravity vector
+							printf("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
+						}
+						normalizedGrav = Vec3_Normalize(normalizedGrav);
+
+						// Debugging Gravity Vector
+						printf("Normalized Gravity: X=%f, Y=%f, Z=%f\n", normalizedGrav.x, normalizedGrav.y, normalizedGrav.z);
+
+						// ---- Apply World Space Transformation ----
+						Vector3 transformedGyro = TransformToWorldSpace(
+							rawGyro,         // Raw gyro input as a vector
+							normalizedGrav   // Normalized gravity vector
+						);
+
+						// ---- Map Transformed Values ----
+						gyro_yaw = transformedGyro.x;    // Proper Yaw (Left/Right)
+						gyro_pitch = transformedGyro.y;  // Proper Pitch (Up/Down)
+						gyro_roll = transformedGyro.z;   // Proper Roll (Tilt)
+
+						// ---- Debugging Logs ----
+						printf("World Space Gyro (Joystick): Yaw=%f, Pitch=%f, Roll=%f\n",
+							gyro_yaw, gyro_pitch, gyro_roll);
 
 						break;
 					}
