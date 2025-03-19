@@ -2035,33 +2035,30 @@ void Controller_Rumble(const char* name, vec3_t source, qboolean from_player,
 	{
 		intens = 1.75f;
 
+		float trigger_intensity = 0.0f; // Shared intensity for both triggers
+
 		if (strstr(name, "/blastf") || strstr(name, "/hyprbf") || strstr(name, "/nail"))
 		{
-			trigger_left = 0.1f;
-			trigger_right = 0.6f; // Dampened blasters and nailguns
+			trigger_intensity = 0.6f; // Set shared intensity for blasters and nailguns
 		}
 		else if (strstr(name, "/shotgf") || strstr(name, "/rocklf"))
 		{
-			trigger_left = 0.0f;
-			trigger_right = 2.0f; // Stronger shotgun & rocket launcher
+			trigger_intensity = 2.0f; // Stronger shotgun & rocket launcher
 			duration *= 0.7;
 		}
 		else if (strstr(name, "/sshotf"))
 		{
-			trigger_left = 0.0f;
-			trigger_right = 2.0f; // Super shotgun's short burst
+			trigger_intensity = 2.0f; // Super shotgun's short burst
 			duration *= 0.6;
 		}
 		else if (strstr(name, "/machgf") || strstr(name, "/disint"))
 		{
-			trigger_left = 0.8f;
-			trigger_right = 1.2f; // Machine gun & disruptor fire
+			trigger_intensity = 1.2f; // Machine gun & disruptor fire
 		}
 		else if (strstr(name, "/plasshot")) // Phalanx Cannon
 		{
-			trigger_left = 0.4f;
-			trigger_right = 1.5f;
-			duration *= 0.5; // Short powerful burst
+			trigger_intensity = 1.5f; // Short powerful burst
+			duration *= 0.5;
 		}
 		else if (strstr(name, "/grenlb") || strstr(name, "/hgrenb") ||
 			strstr(name, "open") || strstr(name, "warn"))
@@ -2083,13 +2080,16 @@ void Controller_Rumble(const char* name, vec3_t source, qboolean from_player,
 		}
 		else if (strstr(name, "r")) // Reloads & ion ripper fire
 		{
-			trigger_left = 0.1f;
-			trigger_right = 0.6f; // Lighter feedback
+			trigger_intensity = 0.6f; // Lighter feedback
 		}
 		else
 		{
 			return; // Skip unsupported weapon sounds
 		}
+
+		// Assign the same intensity to both triggers
+		trigger_left = trigger_intensity;
+		trigger_right = trigger_intensity;
 
 		// Handle trigger rumbles for weapons
 		if (SDL_GameControllerHasRumbleTriggers(controller))
