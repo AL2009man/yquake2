@@ -2095,6 +2095,15 @@ void Controller_Rumble(const char* name, vec3_t source, qboolean from_player,
 		if (SDL_GameControllerHasRumbleTriggers(controller))
 		{
 			float trigger_haptic_magnitude = SDL_clamp(joy_trigger_haptic_magnitude->value, 0.0f, 1.0f);
+
+			// Check for "joy_trigger_haptic_magnitude = 0.0" and fall back
+			if (trigger_haptic_magnitude == 0.0f)
+			{
+				printf("Trigger haptic magnitude is 0.0. Falling back to general rumble for: %s\n", name);
+				goto general_rumble; // Redirect to general rumble logic
+			}
+
+			// Calculate trigger rumble intensity
 			unsigned short left_rumble = (unsigned short)(trigger_left * trigger_haptic_magnitude * volume * 0xFFFF);
 			unsigned short right_rumble = (unsigned short)(trigger_right * trigger_haptic_magnitude * volume * 0xFFFF);
 
@@ -2285,7 +2294,7 @@ IN_Controller_Init(qboolean notify_user)
 #ifdef SDL_HINT_JOYSTICK_RAWINPUT  // Use RAWINPUT for advanced joystick support
 		SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "1");
 #endif
-#ifdef SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT  // Correlate RAWINPUT with XInput/WGI
+#ifdef SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT  // Correlate RAWINPUT with XInput/Windows.Gaming.Input
 		SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT, "1");
 #endif
 #ifdef SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE  // Extended input reports on PS controllers
@@ -2305,7 +2314,6 @@ IN_Controller_Init(qboolean notify_user)
 			return;
 		}
 	}
-
 
 	Com_Printf ("%i joysticks were found.\n", SDL_NumJoysticks());
 
