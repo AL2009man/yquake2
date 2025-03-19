@@ -33,6 +33,7 @@
 #include "../header/client.h"
 #include "../sound/header/local.h"
 #include "header/qmenu.h"
+#include <SDL.h> // For SDL2 and SDL3 compatibility
 
 /* Number of the frames of the spinning quake logo */
 #define NUM_CURSOR_FRAMES 15
@@ -2071,6 +2072,7 @@ static menuslider_s s_joy_pitchsensitivity_slider;
 static menuslider_s s_joy_forwardsensitivity_slider;
 static menuslider_s s_joy_sidesensitivity_slider;
 static menuslider_s s_joy_haptic_slider;
+static menuslider_s s_joy_trigger_haptic_slider;
 static menuaction_s s_joy_stickcfg_action;
 static menuaction_s s_joy_gyro_action;
 static menuaction_s s_joy_customize_buttons_action;
@@ -2168,16 +2170,48 @@ Joy_MenuInit(void)
     s_joy_sidesensitivity_slider.maxvalue = 2.0f;
     Menu_AddItem(&s_joy_menu, (void *)&s_joy_sidesensitivity_slider);
 
-    if (show_haptic) {
-        s_joy_haptic_slider.generic.type = MTYPE_SLIDER;
-        s_joy_haptic_slider.generic.x = 0;
-        s_joy_haptic_slider.generic.y = (y += 20);
-        s_joy_haptic_slider.generic.name = "rumble intensity";
-        s_joy_haptic_slider.cvar = "joy_haptic_magnitude";
-        s_joy_haptic_slider.minvalue = 0.0f;
-        s_joy_haptic_slider.maxvalue = 2.0f;
-        Menu_AddItem(&s_joy_menu, (void *)&s_joy_haptic_slider);
+if (show_haptic) {
+    SDL_Joystick *controller = SDL_JoystickOpen(0);
+    if (!controller) {
+        printf("Failed to open joystick: %s\n", SDL_GetError());
+        return;
     }
+
+    s_joy_haptic_slider.generic.type = MTYPE_SLIDER;
+    s_joy_haptic_slider.generic.x = 0;
+    s_joy_haptic_slider.generic.y = (y += 20);
+    s_joy_haptic_slider.generic.name = "rumble intensity";
+    s_joy_haptic_slider.cvar = "joy_haptic_magnitude";
+    s_joy_haptic_slider.minvalue = 0.0f;
+    s_joy_haptic_slider.maxvalue = 2.0f;
+    Menu_AddItem(&s_joy_menu, (void *)&s_joy_haptic_slider);
+    
+    #ifdef WITH_SDL3
+    if (SDL_JoystickHasRumbleTriggers(controller)) {
+        s_joy_trigger_haptic_slider.generic.type = MTYPE_SLIDER;
+        s_joy_trigger_haptic_slider.generic.x = 0;
+        s_joy_trigger_haptic_slider.generic.y = (y += 20);
+        s_joy_trigger_haptic_slider.generic.name = "trigger rumble intensity";
+        s_joy_trigger_haptic_slider.cvar = "joy_trigger_haptic_magnitude";
+        s_joy_trigger_haptic_slider.minvalue = 0.0f;
+        s_joy_trigger_haptic_slider.maxvalue = 2.0f;
+        Menu_AddItem(&s_joy_menu, (void *)&s_joy_trigger_haptic_slider);
+    }
+    #elif SDL_VERSION_ATLEAST(2, 0, 14)
+    if (SDL_JoystickHasRumbleTriggers(controller)) {
+        s_joy_trigger_haptic_slider.generic.type = MTYPE_SLIDER;
+        s_joy_trigger_haptic_slider.generic.x = 0;
+        s_joy_trigger_haptic_slider.generic.y = (y += 20);
+        s_joy_trigger_haptic_slider.generic.name = "trigger rumble intensity";
+        s_joy_trigger_haptic_slider.cvar = "joy_trigger_haptic_magnitude";
+        s_joy_trigger_haptic_slider.minvalue = 0.0f;
+        s_joy_trigger_haptic_slider.maxvalue = 2.0f;
+        Menu_AddItem(&s_joy_menu, (void *)&s_joy_trigger_haptic_slider);
+    }
+    #endif
+
+    SDL_JoystickClose(controller); // Clean up resources
+}
 
     s_joy_stickcfg_action.generic.type = MTYPE_ACTION;
     s_joy_stickcfg_action.generic.x = 0;
