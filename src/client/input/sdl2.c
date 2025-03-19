@@ -40,6 +40,7 @@
 #include "header/input.h"
 #include "../header/keyboard.h"
 #include "../header/client.h"
+#include  "stdbool.h"
 
 // ----
 
@@ -167,6 +168,7 @@ static cvar_t *joy_flick_smoothed;
 // Joystick haptic
 static cvar_t *joy_haptic_magnitude;
 static cvar_t *joy_haptic_distance;
+static cvar_t *joy_trigger_haptic_magnitude;
 
 // Gyro mode (0=off, 3=on, 1-2=uses button to enable/disable)
 cvar_t *gyro_mode;
@@ -2013,74 +2015,124 @@ Haptic_Feedback(const char *name, int effect_volume, int effect_duration,
  *	source = origin of audio
  *	from_player = if source is the client (player)
  */
-void
-Controller_Rumble(const char *name, vec3_t source, qboolean from_player,
-		unsigned int duration, unsigned short int volume)
+void Controller_Rumble(const char* name, vec3_t source, qboolean from_player,
+	unsigned int duration, unsigned short int volume)
 {
+	vec_t trigger_left = 0.0f, trigger_right = 0.0f;
 	vec_t intens = 0.0f, low_freq = 1.0f, hi_freq = 1.0f, dist_prop;
 	unsigned short int max_distance = 4;
 	unsigned int effect_volume;
 
+	// Abort if the controller is unavailable, haptic is off, or parameters are invalid
 	if (!show_haptic || !controller || joy_haptic_magnitude->value <= 0
 		|| volume == 0 || duration == 0)
 	{
 		return;
 	}
 
+	// Weapon-specific logic
 	if (strstr(name, "weapons/"))
 	{
 		intens = 1.75f;
 
 		if (strstr(name, "/blastf") || strstr(name, "/hyprbf") || strstr(name, "/nail"))
 		{
-			intens = 0.125f;	// dampen blasters and nailgun's fire
-			low_freq = 0.7f;
-			hi_freq = 1.2f;
+			trigger_left = 0.1f;
+			trigger_right = 0.6f; // Dampened blasters and nailguns
 		}
 		else if (strstr(name, "/shotgf") || strstr(name, "/rocklf"))
 		{
-			low_freq = 1.1f;	// shotgun & RL shouldn't feel so weak
+			trigger_left = 0.0f;
+			trigger_right = 2.0f; // Stronger shotgun & rocket launcher
 			duration *= 0.7;
 		}
 		else if (strstr(name, "/sshotf"))
 		{
-			duration *= 0.6;	// the opposite for super shotgun
+			trigger_left = 0.0f;
+			trigger_right = 2.0f; // Super shotgun's short burst
+			duration *= 0.6;
 		}
 		else if (strstr(name, "/machgf") || strstr(name, "/disint"))
 		{
-			intens = 1.125f;	// machine gun & disruptor fire
+			trigger_left = 0.8f;
+			trigger_right = 1.2f; // Machine gun & disruptor fire
 		}
-		else if (strstr(name, "/grenlb") || strstr(name, "/hgrenb")	// bouncing grenades
-			|| strstr(name, "open") || strstr(name, "warn"))	// rogue's items
+		else if (strstr(name, "/plasshot")) // Phalanx Cannon
 		{
-			return;	// ... don't have feedback
+			trigger_left = 0.4f;
+			trigger_right = 1.5f;
+			duration *= 0.5; // Short powerful burst
 		}
-		else if (strstr(name, "/plasshot"))	// phalanx cannon
+		else if (strstr(name, "/grenlb") || strstr(name, "/hgrenb") ||
+			strstr(name, "open") || strstr(name, "warn"))
 		{
-			intens = 1.0f;
-			hi_freq = 0.3f;
-			duration *= 0.5;
+			return; // Ignore bouncing grenades and rogue items
 		}
-		else if (strstr(name, "x"))		// explosions...
+		else if (strstr(name, "x")) // Explosions (redirect to General Rumble logic)
 		{
+			printf("Redirecting explosion event to General Rumble: %s\n", name);
+
+			// Assign explosion-specific parameters
 			low_freq = 1.1f;
 			hi_freq = 0.9f;
-			max_distance = 550;		// can be felt far away
+			max_distance = 550; // Can be felt far away
+			intens = 1.1f; // General rumble intensity for explosions
+
+			// Skip trigger rumble and proceed to general rumble
+			goto general_rumble;
 		}
-		else if (strstr(name, "r"))		// reloads & ion ripper fire
+		else if (strstr(name, "r")) // Reloads & ion ripper fire
 		{
-			low_freq = 0.1f;
-			hi_freq = 0.6f;
+			trigger_left = 0.1f;
+			trigger_right = 0.6f; // Lighter feedback
 		}
+		else
+		{
+			return; // Skip unsupported weapon sounds
+		}
+
+		// Handle trigger rumbles for weapons
+		if (SDL_GameControllerHasRumbleTriggers(controller))
+		{
+			float trigger_haptic_magnitude = SDL_clamp(joy_trigger_haptic_magnitude->value, 0.0f, 1.0f);
+			unsigned short left_rumble = (unsigned short)(trigger_left * trigger_haptic_magnitude * volume * 0xFFFF);
+			unsigned short right_rumble = (unsigned short)(trigger_right * trigger_haptic_magnitude * volume * 0xFFFF);
+
+			printf("Trigger Rumble - Weapon: %s, Left: %u, Right: %u, Duration: %u\n",
+				name, left_rumble, right_rumble, duration);
+
+			if (SDL_GameControllerRumbleTriggers(controller, left_rumble, right_rumble, duration) != 0)
+			{
+				printf("Trigger rumble failed: %s\n", SDL_GetError());
+			}
+		}
+		else
+		{
+			// Fallback: Use general controller rumble
+			float general_haptic_magnitude = SDL_clamp(joy_haptic_magnitude->value, 0.0f, 1.0f);
+			unsigned int general_rumble_intensity = (unsigned int)(trigger_right * general_haptic_magnitude * volume * 0xFFFF);
+
+			printf("Fallback Rumble - Weapon: %s, Intensity: %u, Duration: %u\n",
+				name, general_rumble_intensity, duration);
+
+			if (SDL_GameControllerRumble(controller, general_rumble_intensity, general_rumble_intensity, duration) != 0)
+			{
+				printf("General rumble failed: %s\n", SDL_GetError());
+			}
+		}
+
+		return; // Exit after handling weapon logic
 	}
-	else if (strstr(name, "player/land"))
+
+general_rumble: // General rumble logic for other events (including explosions)
+	if (strstr(name, "player/land"))
 	{
-		intens = 2.2f;	// fall without injury
+		intens = 2.2f; // Fall without injury
 		low_freq = 1.1f;
 	}
 	else if (strstr(name, "player/") || strstr(name, "players/"))
 	{
-		low_freq = 1.2f;	// exaggerate player damage
+		low_freq = 1.2f; // Exaggerate player damage
 		if (strstr(name, "/burn") || strstr(name, "/pain100") || strstr(name, "/pain75"))
 		{
 			intens = 2.4f;
@@ -2102,36 +2154,39 @@ Controller_Rumble(const char *name, vec3_t source, qboolean from_player,
 	}
 	else if (strstr(name, "plats/"))
 	{
-		intens = 1.0f;			// platforms rumble...
-		max_distance = 200;		// when player near them
+		intens = 1.0f; // Platforms rumble
+		max_distance = 200;
 	}
 	else if (strstr(name, "world/"))
 	{
-		max_distance = 3500;	// ambient events
-		if (strstr(name, "/dish") || strstr(name, "/drill2a") || strstr(name, "/dr_")
-			|| strstr(name, "/explod1") || strstr(name, "/rocks")
-			|| strstr(name, "/rumble"))
+		max_distance = 3500; // Ambient events
+
+		if (strstr(name, "/dish") || strstr(name, "/drill2a") || strstr(name, "/dr_") ||
+			strstr(name, "/explod1") || strstr(name, "/rocks") || strstr(name, "/rumble"))
 		{
 			intens = 0.28f;
 			low_freq = 0.7f;
 		}
 		else if (strstr(name, "/quake"))
 		{
-			intens = 0.67f;		// (earth)quakes are more evident
+			intens = 0.67f; // Earthquakes
 			low_freq = 1.2f;
 		}
 		else if (strstr(name, "/train2"))
 		{
 			intens = 0.28f;
-			max_distance = 290;	// just machinery
+			max_distance = 290;
 		}
 	}
 
+	// Skip if no intensity is set
 	if (intens == 0.0f)
 	{
+		printf("Skipping event with no intensity: %s\n", name);
 		return;
 	}
 
+	// Calculate distance-based scaling
 	if (from_player)
 	{
 		dist_prop = 1.0f;
@@ -2141,6 +2196,7 @@ Controller_Rumble(const char *name, vec3_t source, qboolean from_player,
 		dist_prop = VectorLength(source);
 		if (dist_prop > max_distance)
 		{
+			printf("Skipping event out of range: %s\n", name);
 			return;
 		}
 		dist_prop = (max_distance - dist_prop) / max_distance;
@@ -2150,20 +2206,13 @@ Controller_Rumble(const char *name, vec3_t source, qboolean from_player,
 	low_freq = Q_min(effect_volume * low_freq, USHRT_MAX);
 	hi_freq = Q_min(effect_volume * hi_freq, USHRT_MAX);
 
-	// Com_Printf("%-29s: vol %5u - %4u ms - dp %.3f l %5.0f h %5.0f\n",
-	//	name, effect_volume, duration, dist_prop, low_freq, hi_freq);
+	printf("Applying General Rumble - Event: %s, Volume: %u, Duration: %u\n",
+		name, effect_volume, duration);
 
 #if SDL_VERSION_ATLEAST(2, 0, 9)
-	if (SDL_GameControllerRumble(controller, low_freq, hi_freq, duration) == -1)
+	if (SDL_GameControllerRumble(controller, low_freq, hi_freq, duration) != 0)
 	{
-		if (!joystick_haptic)
-		{
-			/* no haptic, some other reason of error */
-			return;
-		}
-
-		/* All haptic/force feedback slots are busy, try to clean up little bit. */
-		IN_Haptic_Effects_Shutdown();
+		printf("General rumble failed for: %s\n", name);
 	}
 #endif
 }
@@ -2233,23 +2282,30 @@ IN_Controller_Init(qboolean notify_user)
 
 	if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER))
 	{
-
-#ifdef SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE	// extended input reports on PS controllers (enables gyro thru bluetooth)
-		SDL_SetHint( SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1" );
+#ifdef SDL_HINT_JOYSTICK_RAWINPUT  // Use RAWINPUT for advanced joystick support
+		SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT, "1");
+#endif
+#ifdef SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT  // Correlate RAWINPUT with XInput/WGI
+		SDL_SetHint(SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT, "1");
+#endif
+#ifdef SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE  // Extended input reports on PS controllers
+		SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, "1");
 #endif
 #ifdef SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE
-		SDL_SetHint( SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1" );
+		SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, "1");
 #endif
-#ifdef SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS	// use button positions instead of labels, like SDL3
-		SDL_SetHint( SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0" );
+#ifdef SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS  // Use button positions instead of labels, like SDL3
+		SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
 #endif
 
+		// Initialize SDL GameController and Haptic subsystems
 		if (SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC) == -1)
 		{
-			Com_Printf ("Couldn't init SDL Game Controller: %s.\n", SDL_GetError());
+			Com_Printf("Couldn't init SDL Game Controller: %s.\n", SDL_GetError());
 			return;
 		}
 	}
+
 
 	Com_Printf ("%i joysticks were found.\n", SDL_NumJoysticks());
 
@@ -2389,49 +2445,66 @@ IN_Controller_Init(qboolean notify_user)
 				SDL_GameControllerSetLED(controller, 0, 80, 0);	// green light
 			}
 
-#endif	// !NO_SDL_GYRO
+#endif  // !NO_SDL_GYRO
 
-			joystick_haptic = SDL_HapticOpenFromJoystick(SDL_GameControllerGetJoystick(controller));
+            joystick_haptic = SDL_HapticOpenFromJoystick(SDL_GameControllerGetJoystick(controller));
 
-			if (joystick_haptic &&
-				(SDL_HapticQuery(joystick_haptic) & SDL_HAPTIC_SINE) == 0)
-			{
-				/* Disable haptic for joysticks without SINE */
-				SDL_HapticClose(joystick_haptic);
-				joystick_haptic = NULL;
-			}
+            if (joystick_haptic &&
+                (SDL_HapticQuery(joystick_haptic) & SDL_HAPTIC_SINE) == 0)
+            {
+                /* Disable haptic for joysticks without SINE */
+                SDL_HapticClose(joystick_haptic);
+                joystick_haptic = NULL;
+            }
 
-			if (joystick_haptic)
-			{
-				IN_Haptic_Effects_Info();
-				show_haptic = true;
-			}
+            if (joystick_haptic)
+            {
+                IN_Haptic_Effects_Info();
+                show_haptic = true;
+            }
 
-#if SDL_VERSION_ATLEAST(2, 0, 18)	// support for query on features from controller
-			if (SDL_GameControllerHasRumble(controller))
-#elif SDL_VERSION_ATLEAST(2, 0, 9)	// support for rumble
-			if (SDL_GameControllerRumble(controller, 1, 1, 1) == 0)
-#else					// no rumble support on SDL < 2.0.9
-			if (false)
+#if SDL_VERSION_ATLEAST(2, 0, 18)   // support for query on features from controller
+            if (SDL_GameControllerHasRumble(controller))
+#elif SDL_VERSION_ATLEAST(2, 0, 9)  // support for general rumble
+            if (SDL_GameControllerRumble(controller, 1, 1, 1) == 0)
+#else                                // no rumble support on SDL < 2.0.9
+            if (false)
 #endif
-			{
-				show_haptic = true;
-				Com_Printf("Rumble support available.\n");
-			}
-			else
-			{
-				Com_Printf("Controller doesn't support rumble.\n");
-			}
+            {
+                show_haptic = true;
+                Com_Printf("Rumble support available.\n");
 
-#ifndef NO_SDL_GYRO	// "native SDL gyro" exits when finding a single working gamepad
-			break;
+#if SDL_VERSION_ATLEAST(2, 0, 14)   // Check for Trigger Rumble support (introduced in 2.0.14)
+                SDL_Joystick *joystick = SDL_GameControllerGetJoystick(controller);
+
+                if (SDL_GameControllerRumbleTriggers(controller, 1, 1, 1) == 0)
+                {
+                    Com_Printf("Trigger Rumble support available.\n");
+                }
+                else if (joystick && SDL_JoystickHasRumbleTriggers(joystick))
+                {
+                    Com_Printf("Trigger Rumble support available.\n");
+                }
+                else
+                {
+                    Com_Printf("Controller doesn't support trigger rumble.\n");
+                }
 #endif
-		}
-	}
+            }
+            else
+            {
+                Com_Printf("Controller doesn't support rumble.\n");
+            }
 
-	IN_GamepadLabels_Changed();
-	IN_GamepadConfirm_Changed();
-	IN_GyroMode_Changed();
+#ifndef NO_SDL_GYRO  // "Native SDL gyro" exits when finding a single working gamepad
+            break;
+#endif
+        }
+    }
+
+    IN_GamepadLabels_Changed();
+    IN_GamepadConfirm_Changed();
+    IN_GyroMode_Changed();
 }
 
 /*
@@ -2461,6 +2534,7 @@ IN_Init(void)
 	joy_haptic_magnitude = Cvar_Get("joy_haptic_magnitude", "0.0", CVAR_ARCHIVE);
 	joy_haptic_distance = Cvar_Get("joy_haptic_distance", "100.0", CVAR_ARCHIVE);
 	haptic_feedback_filter = Cvar_Get("joy_haptic_filter", default_haptic_filter, CVAR_ARCHIVE);
+	joy_trigger_haptic_magnitude = Cvar_Get("joy_trigger_haptic_magnitude", "0.0", CVAR_ARCHIVE);
 
 	joy_yawsensitivity = Cvar_Get("joy_yawsensitivity", "1.0", CVAR_ARCHIVE);
 	joy_pitchsensitivity = Cvar_Get("joy_pitchsensitivity", "1.0", CVAR_ARCHIVE);
