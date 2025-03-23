@@ -35,7 +35,14 @@ extern "C" {
 #define EPSILON 1e-5
 #endif
 
- // ---- Type Definitions ----
+ // ---- Debugging and Logging ----
+#ifdef ENABLE_DEBUG_LOGS
+#define DEBUG_LOG(fmt, ...) printf(fmt, ##__VA_ARGS__)
+#else
+#define DEBUG_LOG(fmt, ...)
+#endif
+
+// ---- Type Definitions ----
 
 typedef struct {
     float x, y, z;
@@ -54,27 +61,37 @@ static inline float clamp(float value, float min, float max) {
 
 // ---- Vector Operations ----
 
-// Creates a new vector
+/**
+ * Creates a new vector.
+ */
 static inline Vector3 Vec3_New(float x, float y, float z) {
     return (Vector3) { x, y, z };
 }
 
-// Subtracts one vector from another
+/**
+ * Subtracts one vector from another.
+ */
 static inline Vector3 Vec3_Subtract(Vector3 a, Vector3 b) {
     return Vec3_New(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
-// Scales a vector by a scalar
+/**
+ * Scales a vector by a scalar.
+ */
 static inline Vector3 Vec3_Scale(Vector3 v, float scalar) {
     return Vec3_New(v.x * scalar, v.y * scalar, v.z * scalar);
 }
 
-// Computes the dot product of two vectors
+/**
+ * Computes the dot product of two vectors.
+ */
 static inline float Vec3_Dot(Vector3 a, Vector3 b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
-// Computes the cross product of two vectors
+/**
+ * Computes the cross product of two vectors.
+ */
 static inline Vector3 Vec3_Cross(Vector3 a, Vector3 b) {
     return Vec3_New(
         a.y * b.z - a.z * b.y,
@@ -83,29 +100,55 @@ static inline Vector3 Vec3_Cross(Vector3 a, Vector3 b) {
     );
 }
 
-// Computes the magnitude (length) of a vector
+/**
+ * Computes the magnitude (length) of a vector.
+ */
 static inline float Vec3_Magnitude(Vector3 v) {
     return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
 }
 
-// Normalizes a vector (returns a zero vector if length is near 0)
+/**
+ * Normalizes a vector (returns a zero vector if length is near 0).
+ */
 static inline Vector3 Vec3_Normalize(Vector3 v) {
     float lengthSquared = v.x * v.x + v.y * v.y + v.z * v.z;
     if (lengthSquared < EPSILON) {
-        printf("Warning: Attempted to normalize a near-zero vector.\n");
+        DEBUG_LOG("Warning: Attempted to normalize a near-zero vector.\n");
         return Vec3_New(0.0f, 0.0f, 0.0f);
     }
     return Vec3_Scale(v, 1.0f / sqrtf(lengthSquared));
 }
 
-// Checks if a vector is near-zero
+/**
+ * Checks if a vector is near-zero.
+ */
 static inline bool Vec3_IsZero(Vector3 v) {
     return (fabsf(v.x) < EPSILON && fabsf(v.y) < EPSILON && fabsf(v.z) < EPSILON);
 }
 
+/**
+ * Linearly interpolates between two vectors.
+ */
+static inline Vector3 Vec3_Lerp(Vector3 a, Vector3 b, float t) {
+    return Vec3_New(
+        a.x + t * (b.x - a.x),
+        a.y + t * (b.y - a.y),
+        a.z + t * (b.z - a.z)
+    );
+}
+
+/**
+ * Reflects a vector about a normal.
+ */
+static inline Vector3 Vec3_Reflect(Vector3 v, Vector3 normal) {
+    return Vec3_Subtract(v, Vec3_Scale(normal, 2.0f * Vec3_Dot(v, normal)));
+}
+
 // ---- Matrix Operations ----
 
-// Multiplies a vector by a matrix (row-major)
+/**
+ * Multiplies a vector by a matrix (row-major).
+ */
 static inline Vector3 MultiplyMatrixVector(Matrix4 matrix, Vector3 vector) {
     return (Vector3) {
         matrix.m[0][0] * vector.x + matrix.m[1][0] * vector.y + matrix.m[2][0] * vector.z,
@@ -114,61 +157,87 @@ static inline Vector3 MultiplyMatrixVector(Matrix4 matrix, Vector3 vector) {
     };
 }
 
+/**
+ * Generates an identity matrix.
+ */
+static inline Matrix4 Matrix4_Identity() {
+    return (Matrix4) {
+        .m = {
+{1.0f, 0.0f, 0.0f, 0.0f},
+{0.0f, 1.0f, 0.0f, 0.0f},
+{0.0f, 0.0f, 1.0f, 0.0f},
+{0.0f, 0.0f, 0.0f, 1.0f}
+        }
+    };
+}
+
 // ---- Global Gravity Vector Management ----
 
 static Vector3 gravNorm = { 0.0f, 1.0f, 0.0f }; // Default gravity vector
 
-// Sets a new gravity vector
+/**
+ * Sets a new gravity vector.
+ */
 static inline void SetGravityVector(float x, float y, float z) {
+    if (isnan(x) || isnan(y) || isnan(z)) {
+        DEBUG_LOG("Error: Gravity vector contains NaN values. Retaining default value.\n");
+        return;
+    }
     Vector3 newGravNorm = Vec3_New(x, y, z);
     if (Vec3_IsZero(newGravNorm)) {
-        printf("Warning: Gravity vector cannot be zero. Retaining default value.\n");
+        DEBUG_LOG("Warning: Gravity vector cannot be zero. Retaining default value.\n");
         return;
     }
     gravNorm = Vec3_Normalize(newGravNorm);
 }
 
-// Resets gravity vector to default
+/**
+ * Resets gravity vector to default.
+ */
 static inline void ResetGravityVector(void) {
     gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);
 }
 
+
 // ---- Gyro Space Transformations ----
 
-// Local Space
-// Transforms gyro inputs to Local Space using a transformation matrix
+/**
+ * Local Space Transformation
+ * Transforms gyro inputs to Local Space using a transformation matrix.
+ */
 static Vector3 TransformToLocalSpace(float yaw, float pitch, float roll,
     float yawSensitivity, float pitchSensitivity, float rollSensitivity, float couplingFactor) {
     // ---- Adjust Roll and Combine Inputs ----
     float adjustedRoll = (roll * rollSensitivity) - (yaw * couplingFactor);
-    Vector3 rawGyro = Vec3_New(yaw * yawSensitivity - adjustedRoll, pitch * pitchSensitivity, 0.0f);
+    Vector3 rawGyro = Vec3_New(
+        yaw * yawSensitivity - adjustedRoll,
+        pitch * pitchSensitivity,
+        0.0f
+    );
 
     // ---- Define Local Transformation Matrix ----
-    Matrix4 localTransformMatrix = {
-        .m = {
-            {1.0f, 0.0f, 0.0f, 0.0f},
-            {0.0f, 1.0f, 0.0f, 0.0f},
-            {0.0f, 0.0f, 1.0f, 0.0f},
-            {0.0f, 0.0f, 0.0f, 1.0f}
-        }
-    };
+    Matrix4 localTransformMatrix = Matrix4_Identity(); // Identity matrix for simplicity
 
     // ---- Apply Transformation ----
     Vector3 localGyro = MultiplyMatrixVector(localTransformMatrix, rawGyro);
-    localGyro.z = -localGyro.z; // Lean fix for Roll
+
+    // ---- Lean Fix for Roll ----
+    localGyro.z = -localGyro.z;
 
     // ---- Return the Transformed Vector ----
     return localGyro;
 }
 
-// Player Space
-// Transforms gyro inputs to Player Space, considering gravity alignment
+/**
+ * Player Space Transformation
+ * Transforms gyro inputs to Player Space, considering gravity alignment.
+ */
 static Vector3 TransformToPlayerSpace(float yaw_input, float pitch_input, float roll_input, Vector3 gravNorm,
     float yawSensitivity, float pitchSensitivity, float rollSensitivity) {
     // ---- Normalize Gravity Vector ----
     if (Vec3_IsZero(gravNorm)) {
         gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default gravity vector
-        printf("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
+        DEBUG_LOG("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
     }
     gravNorm = Vec3_Normalize(gravNorm);
 
@@ -177,18 +246,10 @@ static Vector3 TransformToPlayerSpace(float yaw_input, float pitch_input, float 
     float adjustedPitch = pitch_input * pitchSensitivity;
     float adjustedRoll = (roll_input * rollSensitivity) * gravNorm.x;
 
-    // ---- Combine Adjusted Inputs into Gyro Vector ----
     Vector3 adjustedGyro = Vec3_New(adjustedYaw, adjustedPitch, adjustedRoll);
 
     // ---- Apply Player View Matrix ----
-    Matrix4 playerViewMatrix = {
-        .m = {
-            {1.0f, 0.0f, 0.0f, 0.0f},
-            {0.0f, 1.0f, 0.0f, 0.0f},
-            {0.0f, 0.0f, 1.0f, 0.0f},
-            {0.0f, 0.0f, 0.0f, 1.0f}
-        }
-    };
+    Matrix4 playerViewMatrix = Matrix4_Identity(); // Placeholder matrix
 
     Vector3 playerGyro = MultiplyMatrixVector(playerViewMatrix, adjustedGyro);
 
@@ -196,14 +257,16 @@ static Vector3 TransformToPlayerSpace(float yaw_input, float pitch_input, float 
     return playerGyro;
 }
 
-// World Space
-// Transforms gyro inputs to World Space, considering gravity orientation
+/**
+ * World Space Transformation
+ * Transforms gyro inputs to World Space, considering gravity orientation.
+ */
 static Vector3 TransformToWorldSpace(float yaw_input, float pitch_input, float roll_input, Vector3 gravNorm,
     float yawSensitivity, float pitchSensitivity, float rollSensitivity) {
     // ---- Normalize Gravity Vector ----
     if (Vec3_IsZero(gravNorm)) {
         gravNorm = Vec3_New(0.0f, 1.0f, 0.0f);  // Default gravity vector
-        printf("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
+        DEBUG_LOG("Warning: gravNorm was zero, defaulting to (0, 1, 0)\n");
     }
     gravNorm = Vec3_Normalize(gravNorm);
 
