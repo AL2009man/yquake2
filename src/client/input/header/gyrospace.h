@@ -189,7 +189,9 @@ static Vector3 TransformToPlayerSpace(float yaw_input, float pitch_input, float 
         }
     };
 
-    return MultiplyMatrixVector(playerViewMatrix, adjustedGyro);
+    Vector3 playerGyro = MultiplyMatrixVector(playerViewMatrix, adjustedGyro); // Store the transformed value
+
+    return playerGyro; 
 }
 
 // World Space
@@ -217,11 +219,13 @@ static Vector3 TransformToWorldSpace(float yaw_input, float pitch_input, float r
         pitchAxis = Vec3_Normalize(pitchAxis);
     }
 
-    return Vec3_New(
+    Vector3 worldGyro = Vec3_New(
         -Vec3_Dot(rawGyro, gravNorm),
-        Vec3_Dot(rawGyro, pitchAxis),
+        Vec3_Dot(rawGyro, pitchAxis), 
         rawGyro.z
     );
+
+    return worldGyro; 
 }
 
 #ifdef __cplusplus
