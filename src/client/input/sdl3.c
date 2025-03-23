@@ -1095,7 +1095,7 @@ IN_Update(void)
 							// ---- Extract Raw Calibrated Inputs ----
 							float yaw_input = axis_value - gyro_calibration_y->value;        // Raw Yaw
 							float roll_input = axis_value - gyro_calibration_z->value;       // Raw Roll
-							float pitch_input = -(axis_value - gyro_calibration_x->value);   // Inverted Pitch
+							float pitch_input = axis_value - gyro_calibration_x->value;      // Raw Pitch
 
 							// ---- Sensitivity and Coupling Parameters ----
 							float yawSensitivity = 1.0f;
@@ -1125,7 +1125,7 @@ IN_Update(void)
 							// ---- Extract Raw Calibrated Inputs ----
 							float yaw_input = axis_value - gyro_calibration_y->value;        // Raw Yaw
 							float roll_input = axis_value - gyro_calibration_z->value;       // Raw Roll
-							float pitch_input = -(axis_value - gyro_calibration_x->value);   // Inverted Pitch
+							float pitch_input = axis_value - gyro_calibration_x->value;      // Raw Pitch
 
 							// ---- Sensitivity Parameters ----
 							float yawSensitivity = 1.0f;
@@ -1152,9 +1152,9 @@ IN_Update(void)
 						case 4:  // World Space Mode
 						{
 							// ---- Extract Raw Calibrated Inputs ----
-							float yaw_input = axis_value - gyro_calibration_y->value;  // Yaw
-							float pitch_input = axis_value - gyro_calibration_x->value; // Pitch
-							float roll_input = axis_value - gyro_calibration_z->value;  // Roll
+							float yaw_input = axis_value - gyro_calibration_y->value;        // Raw Yaw
+							float roll_input = axis_value - gyro_calibration_z->value;       // Raw Roll
+							float pitch_input = axis_value - gyro_calibration_x->value;      // Raw Pitch
 
 							// ---- Sensitivity Parameters ----
 							float yawSensitivity = 1.0f;

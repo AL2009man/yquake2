@@ -1108,7 +1108,7 @@ IN_Update(void)
 							// ---- Extract Raw Calibrated Inputs ----
 							float yaw_input = axis_value - gyro_calibration_y->value;        // Raw Yaw
 							float roll_input = axis_value - gyro_calibration_z->value;       // Raw Roll
-							float pitch_input = -(axis_value - gyro_calibration_x->value);   // Inverted Pitch
+							float pitch_input = axis_value - gyro_calibration_x->value;      // Raw Pitch
 
 							// ---- Sensitivity and Coupling Parameters ----
 							float yawSensitivity = 1.0f;
@@ -1138,7 +1138,7 @@ IN_Update(void)
 							// ---- Extract Raw Calibrated Inputs ----
 							float yaw_input = axis_value - gyro_calibration_y->value;        // Raw Yaw
 							float roll_input = axis_value - gyro_calibration_z->value;       // Raw Roll
-							float pitch_input = -(axis_value - gyro_calibration_x->value);   // Inverted Pitch
+							float pitch_input = axis_value - gyro_calibration_x->value;      // Raw Pitch
 
 							// ---- Sensitivity Parameters ----
 							float yawSensitivity = 1.0f;
