@@ -46,6 +46,10 @@ extern "C" {
     GamepadMotion_WRAPPER void GetPlayerSpaceGyro(GamepadMotion* motion, float* x, float* y, float yawRelaxFactor);
     GamepadMotion_WRAPPER void GetWorldSpaceGyro(GamepadMotion* motion, float* x, float* y, float sideReductionThreshold);
 
+    // Wrapper methods for Player Space and World Space gyro transformations
+    GamepadMotion_WRAPPER void CalculatePlayerSpaceGyro(GamepadMotion* motion, float* x, float* y, float yawRelaxFactor);
+    GamepadMotion_WRAPPER void CalculateWorldSpaceGyro(GamepadMotion* motion, float* x, float* y, float sideReductionThreshold);
+
 #ifdef __cplusplus
 }
 #endif
@@ -215,8 +219,58 @@ extern "C" {
         }
     }
 
+    void CalculatePlayerSpaceGyro(GamepadMotion* motion, float* x, float* y, float yawRelaxFactor) {
+        if (motion && x && y) {
+            // Direct logic for Player Space Gyro calculation
+            const float gravY = motion->gravY;
+            const float gravZ = motion->gravZ;
+            const float gyroY = motion->gyroY;
+            const float gyroZ = motion->gyroZ;
+
+            const float worldYaw = -(gravY * gyroY + gravZ * gyroZ);
+            const float worldYawSign = worldYaw < 0.f ? -1.f : 1.f;
+            *y = worldYawSign * fminf(fabsf(worldYaw) * yawRelaxFactor, sqrtf(gyroY * gyroY + gyroZ * gyroZ));
+            *x = motion->gyroX;
+        }
+    }
+
+
+    void CalculateWorldSpaceGyro(GamepadMotion* motion, float* x, float* y, float sideReductionThreshold) {
+        if (motion && x && y) {
+            const float gravX = motion->gravX;
+            const float gravY = motion->gravY;
+            const float gravZ = motion->gravZ;
+            const float gyroX = motion->gyroX;
+            const float gyroY = motion->gyroY;
+            const float gyroZ = motion->gyroZ;
+
+            const float worldYaw = -gravX * gyroX - gravY * gyroY - gravZ * gyroZ;
+
+            const float gravDotPitchAxis = gravX;
+            const float pitchAxisX = 1.f - gravX * gravDotPitchAxis;
+            const float pitchAxisY = -gravY * gravDotPitchAxis;
+            const float pitchAxisZ = -gravZ * gravDotPitchAxis;
+            const float pitchAxisLength = sqrtf(pitchAxisX * pitchAxisX + pitchAxisY * pitchAxisY + pitchAxisZ * pitchAxisZ);
+
+            if (pitchAxisLength > 0.f) {
+                const float flatness = fabsf(gravY);
+                const float upness = fabsf(gravZ);
+                const float sideReduction = sideReductionThreshold <= 0.f ? 1.f : fminf((fmaxf(flatness, upness) - sideReductionThreshold) / sideReductionThreshold, 1.f);
+
+                *x = sideReduction * (pitchAxisX * gyroX + pitchAxisY * gyroY + pitchAxisZ * gyroZ) / pitchAxisLength;
+            }
+            else {
+                *x = 0.f;
+            }
+
+            *y = worldYaw;
+        }
+    }
+
 #ifdef __cplusplus
 }
 #endif
+
+
 
 #endif // GAMEPAD_MOTION_H
