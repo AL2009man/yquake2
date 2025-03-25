@@ -184,19 +184,24 @@ static inline Vector3 GetGravityVector(void) {
 
 
 #ifdef ENABLE_GAMEPAD_MOTION_HELPERS
-#include "GamepadMotion.hpp" // Include GamepadMotionHelpers library
+
+#ifdef __cplusplus
+#include "GamepadMotion.hpp" // Original C++ repository
+#else
+#include "GamepadMotion.h" // Valkirie fork with C wrapper (use .h for compatibility)
+#endif
 
 #ifdef __cplusplus
 
 /**
- * Uses GamepadMotionHelpers to calculate Player Space Gyro values.
+ * Uses GamepadMotionHelpers (C++ original version) to calculate Player Space Gyro values.
  *
  * @param motionData The motion data from GamepadMotionHelpers (Motion data type).
- * @param yawRelaxFactor Relaxation factor for yaw adjustment.
+ * @param yawRelaxFactor Relaxation factor for yaw adjustment (default: 1.41f).
  * @return Transformed vector in Player Space.
  */
-Vector3 IntegratePlayerSpaceGyro(const GamepadMotionHelpers::MotionData& motionData, float yawRelaxFactor) {
-    float x, y;
+static inline Vector3 IntegratePlayerSpaceGyro(const GamepadMotionHelpers::MotionData& motionData, float yawRelaxFactor = 1.41f) {
+    float x = 0.0f, y = 0.0f;
     GamepadMotionHelpers::CalculatePlayerSpaceGyro(
         x, y,
         motionData.Gyro.x, motionData.Gyro.y, motionData.Gyro.z,
@@ -207,14 +212,14 @@ Vector3 IntegratePlayerSpaceGyro(const GamepadMotionHelpers::MotionData& motionD
 }
 
 /**
- * Uses GamepadMotionHelpers to calculate World Space Gyro values.
+ * Uses GamepadMotionHelpers (C++ original version) to calculate World Space Gyro values.
  *
  * @param motionData The motion data from GamepadMotionHelpers (Motion data type).
- * @param sideReductionThreshold Threshold for reducing side impacts.
+ * @param sideReductionThreshold Threshold for reducing side impacts (default: 0.125f).
  * @return Transformed vector in World Space.
  */
-Vector3 IntegrateWorldSpaceGyro(const GamepadMotionHelpers::MotionData& motionData, float sideReductionThreshold) {
-    float x, y;
+static inline Vector3 IntegrateWorldSpaceGyro(const GamepadMotionHelpers::MotionData& motionData, float sideReductionThreshold = 0.125f) {
+    float x = 0.0f, y = 0.0f;
     GamepadMotionHelpers::CalculateWorldSpaceGyro(
         x, y,
         motionData.Gyro.x, motionData.Gyro.y, motionData.Gyro.z,
@@ -224,7 +229,52 @@ Vector3 IntegrateWorldSpaceGyro(const GamepadMotionHelpers::MotionData& motionDa
     return Vec3_New(x, y, 0.0f);
 }
 
+#else // Pure C with Valkirie's C wrapper
+
+/**
+ * Uses GamepadMotionHelpers (C wrapper) to calculate Player Space Gyro values.
+ *
+ * @param motion The GamepadMotion object.
+ * @param yawRelaxFactor Relaxation factor for yaw adjustment.
+ * @return Transformed vector in Player Space.
+ */
+static inline Vector3 IntegratePlayerSpaceGyro(GamepadMotion* motion, float yawRelaxFactor) {
+    if (!motion) {
+        DEBUG_LOG("Error: Motion object is NULL in IntegratePlayerSpaceGyro.\n");
+        return Vec3_New(0.0f, 0.0f, 0.0f); // Return zero vector
+    }
+
+    float x = 0.0f, y = 0.0f;
+    ProcessMotion(motion, motion->gyroX, motion->gyroY, motion->gyroZ,
+        motion->accelX, motion->accelY, motion->accelZ, motion->deltaTime);
+    GetPlayerSpaceGyro(motion, &x, &y, yawRelaxFactor);
+
+    return Vec3_New(x, y, 0.0f);
+}
+
+/**
+ * Uses GamepadMotionHelpers (C wrapper) to calculate World Space Gyro values.
+ *
+ * @param motion The GamepadMotion object.
+ * @param sideReductionThreshold Threshold for reducing side impacts.
+ * @return Transformed vector in World Space.
+ */
+static inline Vector3 IntegrateWorldSpaceGyro(GamepadMotion* motion, float sideReductionThreshold) {
+    if (!motion) {
+        DEBUG_LOG("Error: Motion object is NULL in IntegrateWorldSpaceGyro.\n");
+        return Vec3_New(0.0f, 0.0f, 0.0f); // Return zero vector
+    }
+
+    float x = 0.0f, y = 0.0f;
+    ProcessMotion(motion, motion->gyroX, motion->gyroY, motion->gyroZ,
+        motion->accelX, motion->accelY, motion->accelZ, motion->deltaTime);
+    GetWorldSpaceGyro(motion, &x, &y, sideReductionThreshold);
+
+    return Vec3_New(x, y, 0.0f);
+}
+
 #endif // __cplusplus
+
 #endif // ENABLE_GAMEPAD_MOTION_HELPERS
 
 

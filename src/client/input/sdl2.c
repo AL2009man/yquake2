@@ -41,8 +41,11 @@
 #include <SDL2/SDL.h>
 #include <limits.h>
 
+#define ENABLE_GAMEPAD_MOTION_HELPERS
+
 #include "header/input.h"
 #include "header/gyrospace.h"
+#include "header/gamepadmotion.h"
 #include "../header/keyboard.h"
 #include "../header/client.h"
 #include "stdio.h"
