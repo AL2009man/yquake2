@@ -44,8 +44,8 @@
 #define ENABLE_GAMEPAD_MOTION_HELPERS
 
 #include "header/input.h"
-#include "header/gyrospace.h"
-#include "header/gamepadmotion.h"
+#include "header/GyroSpace.h"
+#include "header/GamepadMotion.h"
 #include "../header/keyboard.h"
 #include "../header/client.h"
 #include "stdio.h"
