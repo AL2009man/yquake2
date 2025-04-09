@@ -1,7 +1,7 @@
 /*
  * =======================================================================
  *
- * Gyro Space and Play!
+ * Gyro Space to Play - A plug-and-play Gyro Space Transformer code
  *
  * Provides functionality for transforming gyro inputs into Local Space,
  * Player Space, and World Space, while handling sensitivity adjustments
@@ -196,7 +196,7 @@ static inline Vector3 GetGravityVector(void) {
  * transformer.
  *
  * https://github.com/JibbSmart/GamepadMotionHelpers
- * 
+ *
  * IMPORTANT: if using GamepadMotion.cpp (Valkirie fork): You must create a corresponding
  * GamepadMotion.h file. This header serves as a wrapper to provide C compatibility
  * and access to GamepadMotion.cpp functionality for both C and C++ environments.
