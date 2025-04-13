@@ -40,14 +40,12 @@
 
 #include <SDL3/SDL.h>
 #include <limits.h>
-#define ENABLE_GAMEPAD_MOTION_HELPERS
 
 #include "SDL3/SDL_gamepad.h"
 #include "SDL3/SDL_properties.h"
 #include "SDL3/SDL_stdinc.h"
 #include "header/input.h"
-#include "header/GyroSpace.h"
-#include "header/GamepadMotion.h"
+#include "header/GyroSpace/GyroSpace.h"
 #include "../header/keyboard.h"
 #include "../header/client.h"
 #include "stdio.h"	
