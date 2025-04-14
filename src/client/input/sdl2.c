@@ -26,6 +26,11 @@
  *
  * Flick Stick handling is based on:
  * http://gyrowiki.jibbsmart.com/blog:good-gyro-controls-part-2:the-flick-stick
+ * 
+ * Gyro Space (Local Space, Player Space, World Space) is based on:
+ * http://gyrowiki.jibbsmart.com/blog:player-space-gyro-and-alternatives-explained
+ * https://github.com/JibbSmart/GamepadMotionHelpers
+ * https://github.com/AL2009man/GyroSpace-and-Play
  *
  * Gyro Space (Local Space, Player Space, World Space) is based on:
  * http://gyrowiki.jibbsmart.com/blog:player-space-gyro-and-alternatives-explained
