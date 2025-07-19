@@ -615,25 +615,17 @@ IN_GamepadLabels_Changed(void)
 static void
 IN_GamepadConfirm_Changed(void)
 {
-	const int requested = (int)joy_confirm->value;
-	japanese_confirm = false;
-	joy_confirm->modified = false;
+	japanese_confirm = ((int)joy_confirm->value == 1);
 
-	if (requested < 0 && controller) // try to autodetect...
+	// Autodetect if requested and controller is present
+	if ((int)joy_confirm->value < 0 && controller)
 	{
-		switch (SDL_GetGamepadType(controller))
-		{
-			case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
-			case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
-				japanese_confirm = true;
-			default:
-				return;
-		}
+		SDL_GamepadButtonLabel south_label = SDL_GetGamepadButtonLabel(controller, SDL_GAMEPAD_BUTTON_SOUTH);
+		SDL_GamepadButtonLabel east_label  = SDL_GetGamepadButtonLabel(controller, SDL_GAMEPAD_BUTTON_EAST);
+		japanese_confirm = (south_label == SDL_GAMEPAD_BUTTON_LABEL_B && east_label == SDL_GAMEPAD_BUTTON_LABEL_A);
 	}
-	else if (requested == 1)
-	{
-		japanese_confirm = true;
-	}
+
+	joy_confirm->modified = false;
 }
 
 #ifdef NO_SDL_GYRO
