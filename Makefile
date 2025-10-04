@@ -56,6 +56,9 @@ WITH_RPATH:=yes
 # Builds with SDL 3 instead of SDL 2.
 WITH_SDL3:=no
 
+# Enable GameInput support for SDL3 on Windows.
+WITH_GAMEINPUT:=no
+
 # Enable systemwide installation of game assets.
 WITH_SYSTEMWIDE:=no
 
@@ -290,6 +293,17 @@ else
 SDLCFLAGS := $(shell sdl2-config --cflags)
 endif
 
+# GameInput support for SDL3 on Windows
+ifeq ($(WITH_GAMEINPUT),yes)
+ifeq ($(WITH_SDL3),yes)
+ifeq ($(YQ2_OSTYPE),Windows)
+# Add GameInput include path so SDL3 can detect GameInput.h
+SDLCFLAGS += -DHAVE_GAMEINPUT
+SDLCFLAGS += -Ithird_party/gameinput/include
+endif
+endif
+endif
+
 ifdef NO_SDL_GYRO
 SDLCFLAGS += -DNO_SDL_GYRO
 endif
@@ -428,6 +442,7 @@ config:
 	@echo "WITH_OPENAL = $(WITH_OPENAL)"
 	@echo "WITH_RPATH = $(WITH_RPATH)"
 	@echo "WITH_SDL3 = $(WITH_SDL3)"
+	@echo "WITH_GAMEINPUT = $(WITH_GAMEINPUT)"
 	@echo "WITH_SYSTEMWIDE = $(WITH_SYSTEMWIDE)"
 	@echo "WITH_SYSTEMDIR = $(WITH_SYSTEMDIR)"
 	@echo "============================"

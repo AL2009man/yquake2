@@ -2505,6 +2505,12 @@ IN_Controller_Init(qboolean notify_user)
 	SDL_Joystick *joystick = NULL;
 	bool is_controller = false;
 
+	// Enable GameInput support on Windows
+#ifdef _WIN32
+	SDL_SetHint(SDL_HINT_JOYSTICK_GAMEINPUT, "1");
+	Com_Printf("GameInput hint enabled for SDL3\n");
+#endif
+
 	cvar = Cvar_Get("joy_escbutton", "0", CVAR_ARCHIVE);
 	if (cvar)
 	{
