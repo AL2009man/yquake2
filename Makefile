@@ -293,7 +293,12 @@ else
 SDLCFLAGS := $(shell sdl2-config --cflags)
 endif
 
-
+# GameInput include path for SDL3 on Windows
+ifeq ($(WITH_SDL3),yes)
+ifeq ($(YQ2_OSTYPE),Windows)
+SDLCFLAGS += -Ithird_party/gameinput
+endif
+endif
 
 ifdef NO_SDL_GYRO
 SDLCFLAGS += -DNO_SDL_GYRO
