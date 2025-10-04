@@ -1,23 +1,21 @@
 /*
- * GameInput C Wrapper - enables SDL3 GameInput detection in C projects
+ * GameInput Abstraction Layer for SDL3 C Projects
  */
 
 #pragma once
 
-#ifndef GAMEINPUT_C_WRAPPER_H
-#define GAMEINPUT_C_WRAPPER_H
+#ifndef GAMEINPUT_H
+#define GAMEINPUT_H
 
 #ifdef __cplusplus
-#define GAMEINPUT_WAS_CPP_DEFINED
-#else
-#define __cplusplus 1
+extern "C" {
 #endif
 
-#include "include/GameInput.h"
+// Indicate GameInput API availability to SDL3
+#define GAMEINPUT_API_VERSION 2
 
-#ifndef GAMEINPUT_WAS_CPP_DEFINED
-#undef __cplusplus
+#ifdef __cplusplus
+}
 #endif
-#undef GAMEINPUT_WAS_CPP_DEFINED
 
-#endif /* GAMEINPUT_C_WRAPPER_H */
+#endif /* GAMEINPUT_H */
