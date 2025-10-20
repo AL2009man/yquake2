@@ -12,7 +12,7 @@ extern "C" {
 #endif
 
 // Indicate GameInput API availability to SDL3
-#define GAMEINPUT_API_VERSION 2
+#define GAMEINPUT_API_VERSION 3
 
 #ifdef __cplusplus
 }
